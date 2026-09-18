@@ -39,3 +39,6 @@ next-env.d.ts
 /work/
 /.npm-cache/
 /.tmp/
+
+.vercel
+.env*
