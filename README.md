@@ -11,8 +11,19 @@ npm run dev
 
 Abra `http://localhost:3000`.
 
+## Variáveis da Vercel
+
+Configure no projeto `mestrelead-front` para Production, Preview e Development:
+
+```env
+OUTREACH_API_URL=https://tironi-outreach.vercel.app
+OUTREACH_API_KEY=
+```
+
+`OUTREACH_API_KEY` deve ter o mesmo valor de `API_KEY` no projeto do backend. As duas variáveis são utilizadas apenas pelas rotas do servidor e não são expostas ao navegador.
+
 ## Métricas do SendPulse
 
-O endpoint de eventos é `/api/webhooks/sendpulse`. Configure `SENDPULSE_WEBHOOK_SECRET` e cadastre no SendPulse a URL publicada com `?secret=SEU_SEGREDO` para os eventos de entrega, abertura, clique e falha.
+O endpoint de eventos é `/api/webhooks/sendpulse`. Ele encaminha os eventos ao `tironi-outreach`, onde entregas, aberturas, cliques e falhas são persistidos.
 
 O MestreLead evita registrar duas vezes o mesmo evento e agrega entregas, aberturas, cliques, respostas e falhas por campanha, assunto e modelo.

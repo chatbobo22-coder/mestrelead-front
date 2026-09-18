@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getChatGPTUser } from '@/app/chatgpt-auth';
-import { nowIso, outreachDb } from '@/lib/outreach-db';
+import { outreachRequest, proxyJson } from '@/lib/outreach-api';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,51 +7,46 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getChatGPTUser()) && process.env.NODE_ENV === 'production')
-    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
   const { id } = await params;
   const input = (await request.json()) as Record<string, unknown>;
-  const result = await outreachDb()
-    .prepare(
-      'UPDATE templates SET name=?,subject=?,preheader=?,text_body=?,html_body=?,updated_at=? WHERE id=? RETURNING *',
-    )
-    .bind(
-      String(input.name ?? '').trim(),
-      String(input.subject ?? '').trim(),
-      String(input.preheader ?? '').trim(),
-      String(input.textBody ?? '').trim(),
-      String(input.htmlBody ?? '').trim(),
-      nowIso(),
-      Number(id),
-    )
-    .first();
-  if (!result)
-    return NextResponse.json(
-      { error: 'Modelo não encontrado' },
-      { status: 404 },
+  try {
+    return proxyJson(
+      await outreachRequest(`/api/templates/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          name: input.name,
+          subject: input.subject,
+          preheader: input.preheader ?? '',
+          text_body: input.textBody,
+          html_body: input.htmlBody,
+        }),
+      }),
     );
-  return NextResponse.json({ template: result });
+  } catch (error) {
+    console.error('[api/templates/:id] failed to update template', error);
+    return NextResponse.json(
+      { error: 'Não foi possível atualizar o modelo no backend.' },
+      { status: 502 },
+    );
+  }
 }
 
 export async function DELETE(
   _: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  if (!(await getChatGPTUser()) && process.env.NODE_ENV === 'production')
-    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
   const { id } = await params;
-  const inUse = await outreachDb()
-    .prepare('SELECT count(*) AS total FROM campaigns WHERE template_id=?')
-    .bind(Number(id))
-    .first<{ total: number }>();
-  if ((inUse?.total ?? 0) > 0)
-    return NextResponse.json(
-      { error: 'Modelo utilizado por uma campanha.' },
-      { status: 409 },
+  try {
+    return proxyJson(
+      await outreachRequest(`/api/templates/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      }),
     );
-  await outreachDb()
-    .prepare('DELETE FROM templates WHERE id=?')
-    .bind(Number(id))
-    .run();
-  return NextResponse.json({ deleted: true });
+  } catch (error) {
+    console.error('[api/templates/:id] failed to delete template', error);
+    return NextResponse.json(
+      { error: 'Não foi possível excluir o modelo no backend.' },
+      { status: 502 },
+    );
+  }
 }

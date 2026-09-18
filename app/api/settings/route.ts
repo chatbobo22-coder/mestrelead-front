@@ -1,49 +1,31 @@
 import { NextResponse } from 'next/server';
-import { getChatGPTUser } from '@/app/chatgpt-auth';
-import { nowIso, outreachDb } from '@/lib/outreach-db';
+import { outreachRequest } from '@/lib/outreach-api';
 
 export const dynamic = 'force-dynamic';
 
-async function authorized() {
-  return (await getChatGPTUser()) || process.env.NODE_ENV !== 'production';
-}
-
 export async function GET() {
-  if (!(await authorized()))
-    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
-  const row = await outreachDb()
-    .prepare('SELECT * FROM settings WHERE id=1')
-    .first();
-  return NextResponse.json({ settings: row });
+  try {
+    const response = await outreachRequest('/health');
+    if (!response.ok) throw new Error(`Backend returned ${response.status}`);
+    const health = (await response.json()) as { dry_run?: boolean };
+    return NextResponse.json({
+      settings: { provider: 'sendpulse_smtp', dry_run: health.dry_run ?? true },
+    });
+  } catch (error) {
+    console.error('[api/settings] failed to load settings', error);
+    return NextResponse.json(
+      { error: 'O backend de outreach não respondeu.' },
+      { status: 502 },
+    );
+  }
 }
 
-export async function PUT(request: Request) {
-  if (!(await authorized()))
-    return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
-  const input = (await request.json()) as Record<string, unknown>;
-  const now = nowIso();
-  const statement = outreachDb().prepare(
-    `INSERT INTO settings (id,provider,from_name,from_email,reply_to,daily_limit,hourly_limit,domain_daily_limit,interval_seconds,send_start_hour,send_end_hour,require_approval,dry_run,updated_at)
-     VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?,?)
-     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider,from_name=excluded.from_name,from_email=excluded.from_email,reply_to=excluded.reply_to,daily_limit=excluded.daily_limit,hourly_limit=excluded.hourly_limit,domain_daily_limit=excluded.domain_daily_limit,interval_seconds=excluded.interval_seconds,send_start_hour=excluded.send_start_hour,send_end_hour=excluded.send_end_hour,require_approval=excluded.require_approval,dry_run=excluded.dry_run,updated_at=excluded.updated_at
-     RETURNING *`,
+export async function PUT() {
+  return NextResponse.json(
+    {
+      error:
+        'As configurações operacionais são controladas pelas variáveis do backend.',
+    },
+    { status: 409 },
   );
-  const row = await statement
-    .bind(
-      'sendpulse_smtp',
-      String(input.fromName ?? 'Tironi Tech'),
-      String(input.fromEmail ?? ''),
-      String(input.replyTo ?? ''),
-      Number(input.dailyLimit ?? 30),
-      Number(input.hourlyLimit ?? 10),
-      Number(input.domainDailyLimit ?? 2),
-      Number(input.intervalSeconds ?? 360),
-      Number(input.sendStartHour ?? 9),
-      Number(input.sendEndHour ?? 17),
-      Boolean(input.requireApproval),
-      Boolean(input.dryRun),
-      now,
-    )
-    .first();
-  return NextResponse.json({ settings: row });
 }

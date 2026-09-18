@@ -2012,6 +2012,9 @@ function CampaignDialog({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const selectedTemplate = templates.find(
+      (item) => item.id === Number(selectedTemplateId),
+    );
     const payload = {
       name: form.get('name'),
       audience: form.get('audience'),
@@ -2019,6 +2022,8 @@ function CampaignDialog({
       subject: campaignSubject,
       scheduledAt: form.get('scheduledAt'),
       dailyLimit: form.get('dailyLimit'),
+      textBody: selectedTemplate?.text_body ?? '',
+      htmlBody: selectedTemplate?.html_body ?? '',
     };
     const response = await fetch('/api/campaigns', {
       method: 'POST',
@@ -2027,10 +2032,7 @@ function CampaignDialog({
     });
     if (response.ok) {
       const data = (await response.json()) as { campaign: Campaign };
-      const selected = templates.find(
-        (item) => item.id === Number(payload.templateId),
-      );
-      onSaved({ ...data.campaign, template_name: selected?.name });
+      onSaved({ ...data.campaign, template_name: selectedTemplate?.name });
       setOpen(false);
     }
   }
