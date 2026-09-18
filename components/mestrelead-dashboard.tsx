@@ -9,7 +9,9 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Database,
   Eye,
+  ExternalLink,
   FileText,
   Gauge,
   Mail,
@@ -56,6 +58,7 @@ type View =
   | 'contacts'
   | 'queue'
   | 'reports'
+  | 'injector'
   | 'settings';
 type Template = {
   id: number;
@@ -86,6 +89,81 @@ type Campaign = {
   replied_count?: number;
   bounced_count?: number;
 };
+type Contact = {
+  id: number;
+  company: string;
+  company_name: string;
+  email: string;
+  score: number;
+  status: string;
+  last_subject?: string | null;
+  opens: number;
+};
+type QueueItem = {
+  id: number;
+  company: string;
+  campaign: string;
+  destination: string;
+  subject?: string | null;
+  scheduled_at?: string | null;
+  status: string;
+};
+type QueueLog = {
+  id: number;
+  time: string;
+  level: string;
+  message: string;
+};
+type QueueSnapshot = {
+  metrics: {
+    queued: number;
+    processed_today: number;
+    accepted_today: number;
+    failed_today: number;
+  };
+  items: QueueItem[];
+  logs: QueueLog[];
+};
+type OperationalSettings = {
+  provider: string;
+  from_name: string;
+  from_email: string;
+  reply_to: string;
+  require_approval: boolean;
+  daily_limit: number;
+  hourly_limit: number;
+  domain_daily_limit: number;
+  send_interval_seconds: number;
+  send_start_hour: number;
+  send_end_hour: number;
+  timezone: string;
+  dry_run: boolean;
+};
+type InjectorConfig = {
+  source: string;
+  base_url: string;
+  competence: string;
+  cnaes: string;
+  ufs: string;
+  active_only: boolean;
+  include_secondary_cnae: boolean;
+  require_nome_fantasia: boolean;
+  require_telefone: boolean;
+  min_population: number;
+  force_etl: boolean;
+  force_enrich: boolean;
+  enrich_batch_size: number;
+};
+type InjectorRun = {
+  id: number;
+  status: string;
+  conclusion?: string | null;
+  event: string;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  head_sha: string;
+};
 
 const nav: { id: View; label: string; icon: typeof Gauge }[] = [
   { id: 'overview', label: 'Visão geral', icon: Gauge },
@@ -94,152 +172,48 @@ const nav: { id: View; label: string; icon: typeof Gauge }[] = [
   { id: 'contacts', label: 'Contatos', icon: Users },
   { id: 'queue', label: 'Fila de envio', icon: Activity },
   { id: 'reports', label: 'Relatórios', icon: BarChart3 },
+  { id: 'injector', label: 'Injector', icon: Database },
   { id: 'settings', label: 'Configurações', icon: Settings },
 ];
 
-const sampleTemplates: Template[] = [
-  {
-    id: -1,
-    name: 'Tecnologia para crescer',
-    subject: 'Uma ideia para a {empresa}',
-    preheader: 'Uma direção prática para reduzir tarefas manuais.',
-    text_body:
-      'Olá, equipe da {empresa}. Podemos analisar um processo manual da sua operação?',
-    html_body: '<h1>Menos tarefas manuais. Mais espaço para crescer.</h1>',
-    updated_at: '2026-09-18T09:20:00Z',
-    sent_count: 436,
-    opened_count: 198,
-    clicked_count: 54,
-    replied_count: 19,
+const emptyQueue: QueueSnapshot = {
+  metrics: {
+    queued: 0,
+    processed_today: 0,
+    accepted_today: 0,
+    failed_today: 0,
   },
-  {
-    id: -2,
-    name: 'Follow-up consultivo',
-    subject: 'Re: Uma ideia para a {empresa}',
-    preheader: 'Podemos retomar esta conversa?',
-    text_body:
-      'Retomando nosso contato sobre automação e IA aplicada ao negócio.',
-    html_body: '<p>Podemos retomar esta conversa?</p>',
-    updated_at: '2026-09-16T14:00:00Z',
-    sent_count: 146,
-    opened_count: 79,
-    clicked_count: 21,
-    replied_count: 12,
-  },
-];
+  items: [],
+  logs: [],
+};
 
-const sampleCampaigns: Campaign[] = [
-  {
-    id: -1,
-    name: 'Automação com IA',
-    template_name: 'Tecnologia para crescer',
-    subject: 'Uma ideia para a {empresa}',
-    audience: 'Leads qualificados',
-    status: 'active',
-    daily_limit: 30,
-    sent_count: 436,
-    delivered_count: 430,
-    opened_count: 198,
-    clicked_count: 54,
-    replied_count: 19,
-    bounced_count: 6,
-  },
-  {
-    id: -2,
-    name: 'Diagnóstico operacional',
-    template_name: 'Tecnologia para crescer',
-    subject: 'Como a {empresa} pode reduzir tarefas manuais',
-    audience: 'Varejo e serviços',
-    status: 'draft',
-    daily_limit: 20,
-  },
-  {
-    id: -3,
-    name: 'Follow-up • Automação',
-    template_name: 'Follow-up consultivo',
-    subject: 'Re: Uma ideia para a {empresa}',
-    audience: 'Sem resposta há 7 dias',
-    status: 'scheduled',
-    daily_limit: 12,
-    sent_count: 146,
-    delivered_count: 144,
-    opened_count: 79,
-    clicked_count: 21,
-    replied_count: 12,
-    bounced_count: 2,
-  },
-];
-
-const contacts = [
-  {
-    company: 'Atlas Comércio',
-    email: 'contato@atlas.com.br',
-    score: 92,
-    status: 'Pronto',
-    lastSubject: 'Uma ideia para a Atlas Comércio',
-    opens: 3,
-  },
-  {
-    company: 'Lumina Serviços',
-    email: 'comercial@lumina.com.br',
-    score: 86,
-    status: 'Pronto',
-    lastSubject: 'Como a Lumina pode reduzir tarefas manuais',
-    opens: 1,
-  },
-  {
-    company: 'Norte Sul Equipamentos',
-    email: 'vendas@nortesul.com.br',
-    score: 79,
-    status: 'Contatado',
-    lastSubject: 'Uma ideia para a Norte Sul Equipamentos',
-    opens: 2,
-  },
-  {
-    company: 'Forma Engenharia',
-    email: 'contato@forma.eng.br',
-    score: 74,
-    status: 'Respondido',
-    lastSubject: 'Re: Uma ideia para a Forma Engenharia',
-    opens: 4,
-  },
-];
-
-const queue = [
-  {
-    company: 'Atlas Comércio',
-    campaign: 'Automação com IA',
-    subject: 'Uma ideia para a Atlas Comércio',
-    when: 'Hoje, 10:24',
-    status: 'Próximo',
-  },
-  {
-    company: 'Lumina Serviços',
-    campaign: 'Automação com IA',
-    subject: 'Uma ideia para a Lumina Serviços',
-    when: 'Hoje, 10:30',
-    status: 'Agendado',
-  },
-  {
-    company: 'Neon Varejo',
-    campaign: 'Automação com IA',
-    subject: 'Uma ideia para a Neon Varejo',
-    when: 'Hoje, 10:36',
-    status: 'Agendado',
-  },
-  {
-    company: 'Forma Engenharia',
-    campaign: 'Follow-up • Automação',
-    subject: 'Re: Uma ideia para a Forma Engenharia',
-    when: 'Hoje, 10:42',
-    status: 'Agendado',
-  },
-];
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetch(url, { cache: 'no-store' });
+  const data = (await response.json().catch(() => ({}))) as T & {
+    detail?: string;
+    error?: string;
+  };
+  if (!response.ok) {
+    throw new Error(
+      data.detail || data.error || `${url}: HTTP ${response.status}`,
+    );
+  }
+  return data;
+}
 
 export function MestreLeadDashboard({ userName }: { userName: string }) {
   const [view, setView] = useState<View>('overview');
-  const [templates, setTemplates] = useState<Template[]>(sampleTemplates);
-  const [campaigns, setCampaigns] = useState<Campaign[]>(sampleCampaigns);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
+  const [settings, setSettings] = useState<OperationalSettings | null>(null);
+  const [injectorConfig, setInjectorConfig] = useState<InjectorConfig | null>(
+    null,
+  );
+  const [injectorRuns, setInjectorRuns] = useState<InjectorRun[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState('');
   const [templateOpen, setTemplateOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [campaignOpen, setCampaignOpen] = useState(false);
@@ -248,28 +222,39 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
   const [notice, setNotice] = useState('');
 
   async function refresh() {
-    try {
-      const [templateResponse, campaignResponse] = await Promise.all([
-        fetch('/api/templates'),
-        fetch('/api/campaigns'),
-      ]);
-      if (templateResponse.ok) {
-        const data = (await templateResponse.json()) as {
-          templates: Template[];
-        };
-        if (data.templates.length) setTemplates(data.templates);
-      }
-      if (campaignResponse.ok) {
-        const data = (await campaignResponse.json()) as {
-          campaigns: Campaign[];
-        };
-        if (data.campaigns.length) setCampaigns(data.campaigns);
-      }
-    } catch {
-      setNotice(
-        'A prévia está usando dados demonstrativos até a conexão ser configurada.',
-      );
-    }
+    const results = await Promise.allSettled([
+      fetchJson<{ templates: Template[] }>('/api/templates'),
+      fetchJson<{ campaigns: Campaign[] }>('/api/campaigns'),
+      fetchJson<{ contacts: Contact[] }>('/api/contacts'),
+      fetchJson<QueueSnapshot>('/api/queue'),
+      fetchJson<{ settings: OperationalSettings }>('/api/settings'),
+      fetchJson<{ config: InjectorConfig }>('/api/injector/config'),
+      fetchJson<{ runs: InjectorRun[] }>('/api/injector/runs'),
+    ]);
+    const errors: string[] = [];
+    const apply = <T,>(index: number, update: (value: T) => void) => {
+      const result = results[index];
+      if (result.status === 'fulfilled') update(result.value as T);
+      else
+        errors.push(
+          result.reason instanceof Error
+            ? result.reason.message
+            : 'Falha de conexão',
+        );
+    };
+    apply<{ templates: Template[] }>(0, (data) => setTemplates(data.templates));
+    apply<{ campaigns: Campaign[] }>(1, (data) => setCampaigns(data.campaigns));
+    apply<{ contacts: Contact[] }>(2, (data) => setContacts(data.contacts));
+    apply<QueueSnapshot>(3, setQueue);
+    apply<{ settings: OperationalSettings }>(4, (data) =>
+      setSettings(data.settings),
+    );
+    apply<{ config: InjectorConfig }>(5, (data) =>
+      setInjectorConfig(data.config),
+    );
+    apply<{ runs: InjectorRun[] }>(6, (data) => setInjectorRuns(data.runs));
+    setDataError([...new Set(errors)].join(' • '));
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -376,9 +361,25 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
             </button>
           </div>
         )}
+        {dataError && (
+          <div className="mx-5 mt-5 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 md:mx-8">
+            <strong>Dados de produção indisponíveis.</strong> {dataError}
+          </div>
+        )}
+        {loading && (
+          <div className="mx-5 mt-5 rounded-lg border bg-white px-4 py-3 text-sm text-muted-foreground md:mx-8">
+            Carregando dados dos serviços de produção…
+          </div>
+        )}
         <div className="p-5 md:p-8">
           {view === 'overview' && (
-            <Overview campaigns={campaigns} setView={setView} paused={paused} />
+            <Overview
+              campaigns={campaigns}
+              queue={queue}
+              settings={settings}
+              setView={setView}
+              paused={paused}
+            />
           )}
           {view === 'campaigns' && (
             <Campaigns
@@ -418,16 +419,28 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
                 }}
               />
             ))}
-          {view === 'contacts' && <Contacts />}
+          {view === 'contacts' && <Contacts contacts={contacts} />}
           {view === 'queue' && (
             <Queue
               paused={paused}
               setPaused={setPaused}
               setNotice={setNotice}
+              snapshot={queue}
+              settings={settings}
             />
           )}
           {view === 'reports' && <Reports campaigns={campaigns} />}
-          {view === 'settings' && <DeliverySettings setNotice={setNotice} />}
+          {view === 'injector' && (
+            <Injector
+              config={injectorConfig}
+              runs={injectorRuns}
+              setNotice={setNotice}
+              refresh={refresh}
+            />
+          )}
+          {view === 'settings' && (
+            <DeliverySettings settings={settings} setNotice={setNotice} />
+          )}
         </div>
       </main>
       <CampaignDialog
@@ -502,10 +515,14 @@ function User({ userName }: { userName: string }) {
 
 function Overview({
   campaigns,
+  queue,
+  settings,
   setView,
   paused,
 }: {
   campaigns: Campaign[];
+  queue: QueueSnapshot;
+  settings: OperationalSettings | null;
   setView: (view: View) => void;
   paused: boolean;
 }) {
@@ -524,8 +541,8 @@ function Overview({
         />
         <Metric
           label="Na fila"
-          value="42"
-          detail="próximos 4 dias"
+          value={String(queue.metrics.queued)}
+          detail="mensagens aguardando processamento"
           icon={Mail}
         />
         <Metric
@@ -563,9 +580,22 @@ function Overview({
               reputação.
             </p>
             <div className="space-y-3">
-              <ControlRow label="Limite diário" value="30" />
-              <ControlRow label="Limite por hora" value="10" />
-              <ControlRow label="Intervalo" value="6 min" />
+              <ControlRow
+                label="Limite diário"
+                value={String(settings?.daily_limit ?? '—')}
+              />
+              <ControlRow
+                label="Limite por hora"
+                value={String(settings?.hourly_limit ?? '—')}
+              />
+              <ControlRow
+                label="Intervalo"
+                value={
+                  settings
+                    ? `${Math.round(settings.send_interval_seconds / 60)} min`
+                    : '—'
+                }
+              />
             </div>
             <Button
               variant="secondary"
@@ -640,6 +670,16 @@ function CampaignTable({
             </TableRow>
           </TableHeader>
           <TableBody>
+            {!campaigns.length && (
+              <TableRow>
+                <TableCell
+                  colSpan={8}
+                  className="h-24 text-center text-muted-foreground"
+                >
+                  Nenhuma campanha retornada pelo outreach.
+                </TableCell>
+              </TableRow>
+            )}
             {campaigns.map((campaign) => (
               <TableRow key={campaign.id} className="h-16">
                 <TableCell className="pl-5 font-semibold">
@@ -695,6 +735,13 @@ function Templates({
         onAction={openCreate}
       />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {!templates.length && (
+          <Card className="border-0 shadow-sm ring-1 ring-slate-200/80 md:col-span-2">
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
+              Nenhum modelo retornado pelo outreach.
+            </CardContent>
+          </Card>
+        )}
         {templates.map((template) => (
           <Card
             key={template.id}
@@ -758,7 +805,16 @@ function Templates({
   );
 }
 
-function Contacts() {
+function Contacts({ contacts }: { contacts: Contact[] }) {
+  const [query, setQuery] = useState('');
+  const normalized = query.trim().toLocaleLowerCase('pt-BR');
+  const visibleContacts = normalized
+    ? contacts.filter((contact) =>
+        `${contact.company} ${contact.email}`
+          .toLocaleLowerCase('pt-BR')
+          .includes(normalized),
+      )
+    : contacts;
   return (
     <div className="space-y-5">
       <PageIntro
@@ -773,6 +829,8 @@ function Contacts() {
             <Input
               className="h-10 pl-9"
               placeholder="Buscar empresa ou e-mail"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
             />
           </div>
         </CardHeader>
@@ -789,21 +847,33 @@ function Contacts() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {contacts.map((contact) => (
-                <TableRow key={contact.email} className="h-15">
+              {!visibleContacts.length && (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    Nenhum contato retornado pelo outreach.
+                  </TableCell>
+                </TableRow>
+              )}
+              {visibleContacts.map((contact) => (
+                <TableRow key={contact.id} className="h-15">
                   <TableCell className="pl-5 font-semibold">
                     {contact.company}
                   </TableCell>
                   <TableCell>{contact.email}</TableCell>
                   <TableCell>{contact.score}</TableCell>
                   <TableCell className="max-w-[340px] truncate text-muted-foreground">
-                    {contact.lastSubject}
+                    {contact.last_subject ?? '—'}
                   </TableCell>
                   <TableCell className="text-right font-mono">
                     {contact.opens}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="secondary">{contact.status}</Badge>
+                    <Badge variant="secondary">
+                      {contactStatus(contact.status)}
+                    </Badge>
                   </TableCell>
                 </TableRow>
               ))}
@@ -819,55 +889,22 @@ function Queue({
   paused,
   setPaused,
   setNotice,
+  snapshot,
+  settings,
 }: {
   paused: boolean;
   setPaused: (paused: boolean) => void;
   setNotice: (notice: string) => void;
+  snapshot: QueueSnapshot;
+  settings: OperationalSettings | null;
 }) {
-  const [running, setRunning] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [processed, setProcessed] = useState(18);
-  const [success, setSuccess] = useState(18);
-  const [failed] = useState(0);
-  const [logs, setLogs] = useState([
-    {
-      time: '10:18:04',
-      level: 'success',
-      message: 'Mensagem aceita para contato@verta.com.br',
-    },
-    {
-      time: '10:12:02',
-      level: 'success',
-      message: 'Mensagem aceita para comercial@novolar.com.br',
-    },
-    {
-      time: '10:06:01',
-      level: 'info',
-      message: 'Cadência respeitada: aguardando 6 minutos',
-    },
-  ]);
-
-  useEffect(() => {
-    if (!running || paused || processed >= 30) return;
-    const timer = window.setInterval(() => {
-      setProcessed((value) => Math.min(30, value + 1));
-      setSuccess((value) => value + 1);
-      const now = new Date().toLocaleTimeString('pt-BR', { hour12: false });
-      setLogs((current) =>
-        [
-          {
-            time: now,
-            level: 'success',
-            message: `Mensagem aceita para o próximo contato da fila`,
-          },
-          ...current,
-        ].slice(0, 8),
-      );
-    }, 6000);
-    return () => window.clearInterval(timer);
-  }, [running, paused, processed]);
-
-  const progress = Math.round((processed / 30) * 100);
+  const running = snapshot.items.some((item) => item.status === 'sending');
+  const processed = Number(snapshot.metrics.processed_today || 0);
+  const success = Number(snapshot.metrics.accepted_today || 0);
+  const failed = Number(snapshot.metrics.failed_today || 0);
+  const total = processed + Number(snapshot.metrics.queued || 0);
+  const progress = total ? Math.round((processed / total) * 100) : 0;
   return (
     <div className="space-y-5">
       <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
@@ -897,7 +934,11 @@ function Queue({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => setScheduleOpen(true)}>
+          <Button
+            variant="outline"
+            onClick={() => setScheduleOpen(true)}
+            disabled={!snapshot.items.length}
+          >
             <CalendarClock /> Agendar envio
           </Button>
           {running ? (
@@ -909,9 +950,8 @@ function Queue({
               <Button
                 variant="destructive"
                 onClick={() => {
-                  setRunning(false);
                   setNotice(
-                    'Execução interrompida. Mensagens não iniciadas permaneceram na fila.',
+                    'Pausa solicitada apenas na interface. O worker precisa expor o controle remoto para interromper a execução.',
                   );
                 }}
               >
@@ -921,12 +961,11 @@ function Queue({
           ) : (
             <Button
               onClick={() => {
-                setRunning(true);
-                setPaused(false);
                 setNotice(
-                  'Envio manual iniciado. A central será atualizada em tempo real.',
+                  'O envio manual precisa ser iniciado pelo worker do outreach; nenhuma simulação foi executada.',
                 );
               }}
+              disabled={!snapshot.items.length}
             >
               <Send /> Enviar agora
             </Button>
@@ -940,7 +979,7 @@ function Queue({
       >
         <Metric
           label="Processados"
-          value={`${processed}/30`}
+          value={`${processed}/${total}`}
           detail={`${progress}% concluído`}
           icon={Activity}
         />
@@ -959,7 +998,7 @@ function Queue({
         />
         <Metric
           label="Velocidade"
-          value="10/h"
+          value={settings ? `${settings.hourly_limit}/h` : '—'}
           detail="cadência protegida"
           icon={Clock3}
         />
@@ -971,7 +1010,9 @@ function Queue({
             <div>
               <CardTitle className="font-bold">Progresso da execução</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                Próximo envio em até 6 minutos.
+                {settings
+                  ? `Próximo envio respeita intervalo de ${Math.round(settings.send_interval_seconds / 60)} minutos.`
+                  : 'Aguardando configuração do outreach.'}
               </p>
             </div>
             <span className="font-mono text-lg font-bold">{progress}%</span>
@@ -984,9 +1025,14 @@ function Queue({
           </div>
         </CardHeader>
         <CardContent className="divide-y p-0">
-          {queue.map((item, index) => (
+          {!snapshot.items.length && (
+            <div className="px-5 py-10 text-center text-sm text-muted-foreground">
+              Nenhuma mensagem aguardando na fila do outreach.
+            </div>
+          )}
+          {snapshot.items.map((item, index) => (
             <div
-              key={item.company}
+              key={item.id}
               className="grid gap-3 px-5 py-4 md:grid-cols-[44px_1fr_1.35fr_150px_120px] md:items-center"
             >
               <span className="grid size-9 place-items-center rounded-full bg-slate-100 font-mono text-sm">
@@ -998,13 +1044,15 @@ function Queue({
               </div>
               <div>
                 <p className="truncate text-sm font-medium">{item.subject}</p>
-                <p className="text-xs text-muted-foreground">{item.when}</p>
+                <p className="text-xs text-muted-foreground">
+                  {formatDateTime(item.scheduled_at)}
+                </p>
               </div>
               <Badge
                 className={index === 0 ? 'bg-indigo-50 text-indigo-700' : ''}
                 variant="secondary"
               >
-                <Clock3 /> {item.status}
+                <Clock3 /> {queueStatus(item.status)}
               </Badge>
               <Button variant="ghost" size="sm">
                 Detalhes
@@ -1032,12 +1080,17 @@ function Queue({
           </Badge>
         </CardHeader>
         <CardContent className="space-y-1 py-3 font-mono text-xs">
-          {logs.map((log, index) => (
+          {!snapshot.logs.length && (
+            <div className="px-2 py-5 text-center text-slate-500">
+              Nenhum evento registrado pelo outreach.
+            </div>
+          )}
+          {snapshot.logs.map((log, index) => (
             <div
-              key={`${log.time}-${index}`}
+              key={`${log.id}-${index}`}
               className="grid grid-cols-[76px_76px_1fr] gap-3 rounded px-2 py-2 hover:bg-white/5"
             >
-              <span className="text-slate-500">{log.time}</span>
+              <span className="text-slate-500">{formatTime(log.time)}</span>
               <span
                 className={
                   log.level === 'success'
@@ -1064,9 +1117,8 @@ function Queue({
           </DialogHeader>
           <div className="grid gap-4">
             <Field label="Campanha">
-              <select className="h-10 rounded-lg border bg-white px-3">
-                <option>Automação com IA</option>
-                <option>Follow-up • Automação</option>
+              <select className="h-10 rounded-lg border bg-white px-3" disabled>
+                <option>Fila atual do outreach</option>
               </select>
             </Field>
             <div className="grid grid-cols-2 gap-4">
@@ -1096,15 +1148,8 @@ function Queue({
             <Button variant="outline" onClick={() => setScheduleOpen(false)}>
               Cancelar
             </Button>
-            <Button
-              onClick={() => {
-                setScheduleOpen(false);
-                setNotice(
-                  'Envio agendado. Ele aparecerá na central antes de iniciar.',
-                );
-              }}
-            >
-              <CalendarClock /> Confirmar agendamento
+            <Button disabled>
+              <CalendarClock /> Aguardando endpoint de agendamento
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1148,9 +1193,21 @@ function Reports({ campaigns }: { campaigns: Campaign[] }) {
           <CardTitle>Saúde da operação</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-6 md:grid-cols-3">
-          <Health label="Reputação do domínio" value="Boa" width="88%" />
-          <Health label="Qualidade da base" value="Alta" width="92%" />
-          <Health label="Cadência" value="Conservadora" width="76%" />
+          <Health
+            label="Taxa de entrega"
+            value={rate(totals.delivered, totals.sent)}
+            width={percentWidth(totals.delivered, totals.sent)}
+          />
+          <Health
+            label="Taxa de abertura"
+            value={rate(totals.opened, totals.delivered)}
+            width={percentWidth(totals.opened, totals.delivered)}
+          />
+          <Health
+            label="Taxa de resposta"
+            value={rate(totals.replied, totals.delivered)}
+            width={percentWidth(totals.replied, totals.delivered)}
+          />
         </CardContent>
       </Card>
       <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
@@ -1203,88 +1260,351 @@ function Reports({ campaigns }: { campaigns: Campaign[] }) {
   );
 }
 
-function DeliverySettings({
+function Injector({
+  config,
+  runs,
   setNotice,
+  refresh,
 }: {
+  config: InjectorConfig | null;
+  runs: InjectorRun[];
   setNotice: (notice: string) => void;
+  refresh: () => Promise<void>;
 }) {
-  const [approval, setApproval] = useState(true);
-  const [dryRun, setDryRun] = useState(true);
-  async function save(event: FormEvent<HTMLFormElement>) {
+  const [draft, setDraft] = useState<InjectorConfig | null>(config);
+  const [starting, setStarting] = useState(false);
+
+  useEffect(() => setDraft(config), [config]);
+
+  async function start(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const response = await fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fromName: form.get('fromName'),
-        fromEmail: form.get('fromEmail'),
-        replyTo: form.get('replyTo'),
-        dailyLimit: form.get('dailyLimit'),
-        hourlyLimit: form.get('hourlyLimit'),
-        domainDailyLimit: form.get('domainDailyLimit'),
-        intervalSeconds: Number(form.get('intervalMinutes')) * 60,
-        sendStartHour: form.get('sendStartHour'),
-        sendEndHour: form.get('sendEndHour'),
-        requireApproval: approval,
-        dryRun,
-      }),
-    });
-    setNotice(
-      response.ok
-        ? 'Configurações salvas.'
-        : 'Não foi possível salvar as configurações.',
+    if (!draft) return;
+    setStarting(true);
+    try {
+      const response = await fetch('/api/injector/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft),
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        detail?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.detail || 'Falha ao iniciar o Injector.');
+      setNotice(
+        result.message ||
+          'Injector iniciado. A execução aparecerá abaixo em instantes.',
+      );
+      window.setTimeout(() => void refresh(), 3000);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Falha ao iniciar o Injector.',
+      );
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  if (!draft) {
+    return (
+      <div className="space-y-5">
+        <PageIntro
+          title="Injector de prospects"
+          description="Configuração e execução do prospect-etl-inejctor."
+        />
+        <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+          <CardContent className="p-8 text-center text-sm text-muted-foreground">
+            O serviço do Injector não retornou a configuração de produção.
+          </CardContent>
+        </Card>
+      </div>
     );
   }
+
   return (
-    <form onSubmit={save} className="space-y-5">
+    <form onSubmit={start} className="space-y-5">
+      <PageIntro
+        title="Injector de prospects"
+        description="Defina de onde os dados serão extraídos, filtre o público e acompanhe cada execução."
+      />
+      <div className="grid gap-5 xl:grid-cols-[1.25fr_.75fr]">
+        <SettingsCard title="Origem e recorte da extração">
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="Fonte de dados">
+              <Input value={draft.source} readOnly />
+            </Field>
+            <Field label="Endereço da fonte">
+              <Input value={draft.base_url} readOnly />
+            </Field>
+            <Field label="Competência (AAAAMM)">
+              <Input
+                value={draft.competence}
+                inputMode="numeric"
+                pattern="[0-9]{6}"
+                required
+                onChange={(event) =>
+                  setDraft({ ...draft, competence: event.target.value })
+                }
+              />
+            </Field>
+            <Field label="População mínima da cidade">
+              <Input
+                type="number"
+                min="0"
+                value={draft.min_population}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    min_population: Number(event.target.value),
+                  })
+                }
+              />
+            </Field>
+          </div>
+          <Field label="CNAEs (separados por vírgula)">
+            <Textarea
+              value={draft.cnaes}
+              placeholder="6201501, 6202300"
+              onChange={(event) =>
+                setDraft({ ...draft, cnaes: event.target.value })
+              }
+            />
+          </Field>
+          <Field label="Estados (UFs separados por vírgula)">
+            <Input
+              value={draft.ufs}
+              placeholder="SP, MG, PR"
+              onChange={(event) =>
+                setDraft({ ...draft, ufs: event.target.value.toUpperCase() })
+              }
+            />
+          </Field>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Toggle
+              label="Somente empresas ativas"
+              description="Ignora cadastros com situação inativa."
+              checked={draft.active_only}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, active_only: checked })
+              }
+            />
+            <Toggle
+              label="Considerar CNAE secundário"
+              description="Amplia a busca além do CNAE principal."
+              checked={draft.include_secondary_cnae}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, include_secondary_cnae: checked })
+              }
+            />
+            <Toggle
+              label="Exigir nome fantasia"
+              description="Mantém apenas empresas com nome comercial."
+              checked={draft.require_nome_fantasia}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, require_nome_fantasia: checked })
+              }
+            />
+            <Toggle
+              label="Exigir telefone"
+              description="Mantém somente registros com telefone."
+              checked={draft.require_telefone}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, require_telefone: checked })
+              }
+            />
+          </div>
+        </SettingsCard>
+        <div className="space-y-5">
+          <SettingsCard title="Processamento">
+            <Field label="Lote de enriquecimento">
+              <Input
+                type="number"
+                min="1"
+                max="10000"
+                value={draft.enrich_batch_size}
+                onChange={(event) =>
+                  setDraft({
+                    ...draft,
+                    enrich_batch_size: Number(event.target.value),
+                  })
+                }
+              />
+            </Field>
+            <Toggle
+              label="Refazer extração"
+              description="Executa o ETL mesmo se a competência já existir."
+              checked={draft.force_etl}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, force_etl: checked })
+              }
+            />
+            <Toggle
+              label="Refazer enriquecimento"
+              description="Reprocessa os dados derivados dos prospects."
+              checked={draft.force_enrich}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, force_enrich: checked })
+              }
+            />
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full"
+              disabled={starting}
+            >
+              {starting ? <Activity className="animate-spin" /> : <Play />}
+              {starting ? 'Iniciando…' : 'Iniciar Injector'}
+            </Button>
+          </SettingsCard>
+          <Card className="border-0 bg-[#071424] text-white shadow-sm ring-0">
+            <CardContent className="space-y-3 p-5 text-sm">
+              <p className="font-semibold">Como funciona</p>
+              <p className="text-slate-300">
+                O botão inicia o pipeline de produção no GitHub Actions. O
+                processamento pesado continua fora do navegador e o andamento
+                aparece na lista de execuções.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+      <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+        <CardHeader className="border-b">
+          <CardTitle>Execuções recentes</CardTitle>
+        </CardHeader>
+        <CardContent className="px-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="pl-5">Início</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Resultado</TableHead>
+                <TableHead className="pr-5 text-right">Detalhes</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {!runs.length && (
+                <TableRow>
+                  <TableCell
+                    colSpan={4}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    Nenhuma execução retornada pelo GitHub Actions.
+                  </TableCell>
+                </TableRow>
+              )}
+              {runs.map((run) => (
+                <TableRow key={run.id}>
+                  <TableCell className="pl-5">
+                    {formatDateTime(run.created_at)}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">
+                      {workflowStatus(run.status)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{workflowConclusion(run.conclusion)}</TableCell>
+                  <TableCell className="pr-5 text-right">
+                    <a
+                      href={run.html_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium hover:bg-slate-100"
+                    >
+                      Abrir <ExternalLink className="size-4" />
+                    </a>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </form>
+  );
+}
+
+function DeliverySettings({
+  settings,
+  setNotice,
+}: {
+  settings: OperationalSettings | null;
+  setNotice: (notice: string) => void;
+}) {
+  const explainReadOnly = () =>
+    setNotice(
+      'Esses valores são controlados com segurança pelo backend do outreach.',
+    );
+  return (
+    <div className="space-y-5">
       <PageIntro
         title="Configurações de envio"
-        description="Identidade do remetente, limites e proteções operacionais."
+        description="Valores reais carregados do backend do outreach."
       />
       <div className="grid gap-5 xl:grid-cols-2">
         <SettingsCard title="Remetente">
           <Field label="Nome">
-            <Input name="fromName" defaultValue="Tironi Tech" />
+            <Input value={settings?.from_name ?? ''} readOnly />
           </Field>
           <Field label="E-mail">
-            <Input
-              name="fromEmail"
-              type="email"
-              placeholder="tironi@tironitech.com"
-            />
+            <Input type="email" value={settings?.from_email ?? ''} readOnly />
           </Field>
           <Field label="Responder para">
-            <Input
-              name="replyTo"
-              type="email"
-              placeholder="tironi@tironitech.com"
-            />
+            <Input type="email" value={settings?.reply_to ?? ''} readOnly />
           </Field>
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
             <ShieldCheck className="mr-2 inline size-4" />
-            SendPulse SMTP selecionado
+            {settings?.provider || 'Provedor não informado'} selecionado
           </div>
         </SettingsCard>
         <SettingsCard title="Cadência">
           <div className="grid grid-cols-2 gap-4">
             <Field label="Por dia">
-              <Input name="dailyLimit" type="number" defaultValue="30" />
+              <Input
+                type="number"
+                value={settings?.daily_limit ?? ''}
+                readOnly
+              />
             </Field>
             <Field label="Por hora">
-              <Input name="hourlyLimit" type="number" defaultValue="10" />
+              <Input
+                type="number"
+                value={settings?.hourly_limit ?? ''}
+                readOnly
+              />
             </Field>
             <Field label="Por domínio/dia">
-              <Input name="domainDailyLimit" type="number" defaultValue="2" />
+              <Input
+                type="number"
+                value={settings?.domain_daily_limit ?? ''}
+                readOnly
+              />
             </Field>
             <Field label="Intervalo (min)">
-              <Input name="intervalMinutes" type="number" defaultValue="6" />
+              <Input
+                type="number"
+                value={
+                  settings
+                    ? Math.round(settings.send_interval_seconds / 60)
+                    : ''
+                }
+                readOnly
+              />
             </Field>
             <Field label="Início">
-              <Input name="sendStartHour" type="number" defaultValue="9" />
+              <Input
+                type="number"
+                value={settings?.send_start_hour ?? ''}
+                readOnly
+              />
             </Field>
             <Field label="Fim">
-              <Input name="sendEndHour" type="number" defaultValue="17" />
+              <Input
+                type="number"
+                value={settings?.send_end_hour ?? ''}
+                readOnly
+              />
             </Field>
           </div>
         </SettingsCard>
@@ -1292,23 +1612,28 @@ function DeliverySettings({
           <Toggle
             label="Exigir aprovação"
             description="Mensagens só entram na fila depois de revisão."
-            checked={approval}
-            onCheckedChange={setApproval}
+            checked={settings?.require_approval ?? false}
+            onCheckedChange={explainReadOnly}
           />
           <Toggle
             label="Modo seguro"
             description="Prepara a campanha sem realizar envios."
-            checked={dryRun}
-            onCheckedChange={setDryRun}
+            checked={settings?.dry_run ?? false}
+            onCheckedChange={explainReadOnly}
           />
         </SettingsCard>
       </div>
       <div className="flex justify-end">
-        <Button type="submit" size="lg">
-          <Save /> Salvar configurações
+        <Button
+          type="button"
+          size="lg"
+          variant="outline"
+          onClick={explainReadOnly}
+        >
+          <ShieldCheck /> Gerenciado pelo backend
         </Button>
       </div>
-    </form>
+    </div>
   );
 }
 
@@ -2255,6 +2580,83 @@ function rate(value?: number, total?: number) {
   return `${((Number(value ?? 0) / total) * 100).toFixed(1).replace('.', ',')}%`;
 }
 
+function percentWidth(value?: number, total?: number) {
+  if (!total) return '0%';
+  return `${Math.min(100, Math.max(0, (Number(value ?? 0) / total) * 100))}%`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return 'Não agendado';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: 'America/Sao_Paulo',
+  }).format(date);
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  }).format(date);
+}
+
+function contactStatus(status: string) {
+  const labels: Record<string, string> = {
+    new: 'Novo',
+    ready: 'Pronto',
+    contacted: 'Contatado',
+    replied: 'Respondido',
+    bounced: 'Falhou',
+    unsubscribed: 'Descadastrado',
+  };
+  return labels[status] ?? status;
+}
+
+function queueStatus(status: string) {
+  const labels: Record<string, string> = {
+    pending: 'Aguardando',
+    queued: 'Na fila',
+    scheduled: 'Agendado',
+    sending: 'Enviando',
+    sent: 'Enviado',
+    failed: 'Falhou',
+  };
+  return labels[status] ?? status;
+}
+
+function workflowStatus(status: string) {
+  const labels: Record<string, string> = {
+    queued: 'Na fila',
+    in_progress: 'Em execução',
+    completed: 'Concluído',
+    requested: 'Solicitado',
+    waiting: 'Aguardando',
+    pending: 'Pendente',
+  };
+  return labels[status] ?? status;
+}
+
+function workflowConclusion(conclusion?: string | null) {
+  if (!conclusion) return '—';
+  const labels: Record<string, string> = {
+    success: 'Sucesso',
+    failure: 'Falhou',
+    cancelled: 'Cancelado',
+    skipped: 'Ignorado',
+    timed_out: 'Tempo esgotado',
+    action_required: 'Ação necessária',
+  };
+  return labels[conclusion] ?? conclusion;
+}
+
 function sumCampaignMetrics(campaigns: Campaign[]) {
   return campaigns.reduce(
     (total, campaign) => ({
@@ -2271,8 +2673,8 @@ function sumCampaignMetrics(campaigns: Campaign[]) {
 
 function personalize(value: string) {
   return value
-    .replaceAll('{empresa}', 'Atlas Comércio')
-    .replaceAll('{razao_social}', 'Atlas Comércio Ltda.')
+    .replaceAll('{empresa}', 'Empresa de exemplo')
+    .replaceAll('{razao_social}', 'Empresa de exemplo Ltda.')
     .replaceAll('{cnpj}', '12.345.678/0001-90');
 }
 
