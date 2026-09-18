@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import {
   Activity,
+  ArrowLeft,
   BarChart3,
   CalendarClock,
   CheckCircle2,
@@ -385,20 +386,38 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
               openCreate={() => setCampaignOpen(true)}
             />
           )}
-          {view === 'templates' && (
-            <Templates
-              templates={templates}
-              openCreate={() => {
-                setEditingTemplate(null);
-                setTemplateOpen(true);
-              }}
-              setPreview={setPreview}
-              editTemplate={(template) => {
-                setEditingTemplate(template);
-                setTemplateOpen(true);
-              }}
-            />
-          )}
+          {view === 'templates' &&
+            (templateOpen ? (
+              <TemplateEditorPage
+                key={editingTemplate?.id ?? 'new'}
+                template={editingTemplate}
+                onCancel={() => setTemplateOpen(false)}
+                onPreview={setPreview}
+                onSaved={(item) => {
+                  setTemplates((current) => [
+                    item,
+                    ...current.filter(
+                      (row) => row.id !== item.id && row.id > 0,
+                    ),
+                  ]);
+                  setTemplateOpen(false);
+                  setNotice('Modelo salvo com sucesso.');
+                }}
+              />
+            ) : (
+              <Templates
+                templates={templates}
+                openCreate={() => {
+                  setEditingTemplate(null);
+                  setTemplateOpen(true);
+                }}
+                setPreview={setPreview}
+                editTemplate={(template) => {
+                  setEditingTemplate(template);
+                  setTemplateOpen(true);
+                }}
+              />
+            ))}
           {view === 'contacts' && <Contacts />}
           {view === 'queue' && (
             <Queue
@@ -411,18 +430,6 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
           {view === 'settings' && <DeliverySettings setNotice={setNotice} />}
         </div>
       </main>
-      <TemplateEditorDialog
-        open={templateOpen}
-        setOpen={setTemplateOpen}
-        template={editingTemplate}
-        onSaved={(item) => {
-          setTemplates((current) => [
-            item,
-            ...current.filter((row) => row.id !== item.id && row.id > 0),
-          ]);
-          setNotice('Modelo salvo com sucesso.');
-        }}
-      />
       <CampaignDialog
         open={campaignOpen}
         setOpen={setCampaignOpen}
@@ -1305,6 +1312,321 @@ function DeliverySettings({
   );
 }
 
+function TemplateEditorPage({
+  template,
+  onCancel,
+  onPreview,
+  onSaved,
+}: {
+  template: Template | null;
+  onCancel: () => void;
+  onPreview: (template: Template) => void;
+  onSaved: (item: Template) => void;
+}) {
+  const [name, setName] = useState(template?.name ?? '');
+  const [subject, setSubject] = useState(template?.subject ?? '');
+  const [preheader, setPreheader] = useState(template?.preheader ?? '');
+  const [textBody, setTextBody] = useState(template?.text_body ?? '');
+  const [htmlBody, setHtmlBody] = useState(template?.html_body ?? '');
+  const [title, setTitle] = useState(
+    stripHtmlHeading(template?.html_body ?? ''),
+  );
+  const [editorTab, setEditorTab] = useState<'content' | 'html' | 'text'>(
+    'content',
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function draft(): Template {
+    return {
+      id: template?.id ?? -Date.now(),
+      name: name || 'Modelo sem nome',
+      subject,
+      preheader,
+      text_body: textBody,
+      html_body: htmlBody || buildSimpleEmail(title || subject, textBody),
+      updated_at: template?.updated_at ?? new Date().toISOString(),
+      sent_count: template?.sent_count,
+      opened_count: template?.opened_count,
+      clicked_count: template?.clicked_count,
+      replied_count: template?.replied_count,
+    };
+  }
+
+  function addVariable(variable: string) {
+    if (editorTab === 'html') setHtmlBody((value) => `${value}${variable}`);
+    else setTextBody((value) => `${value}${variable}`);
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    const finalHtml = htmlBody || buildSimpleEmail(title || subject, textBody);
+    try {
+      const update = Boolean(template && template.id > 0);
+      const response = await fetch(
+        update ? `/api/templates/${template?.id}` : '/api/templates',
+        {
+          method: update ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            subject,
+            preheader,
+            textBody,
+            htmlBody: finalHtml,
+          }),
+        },
+      );
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setError(data.error ?? 'Não foi possível salvar o modelo.');
+        return;
+      }
+      const data = (await response.json()) as { template: Template };
+      onSaved(data.template);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-6">
+      <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
+        <div className="flex items-start gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={onCancel}
+            aria-label="Voltar para modelos"
+          >
+            <ArrowLeft />
+          </Button>
+          <div>
+            <p className="text-sm font-semibold text-[#5b5cf0]">
+              Modelos de e-mail
+            </p>
+            <h2 className="text-2xl font-bold tracking-tight">
+              {template ? 'Editar modelo' : 'Criar modelo'}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Ajuste cada detalhe e salve quando a mensagem estiver pronta.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onPreview(draft())}
+          >
+            <Eye /> Abrir prévia
+          </Button>
+          <Button type="submit" size="lg" disabled={saving}>
+            <Save /> {saving ? 'Salvando...' : 'Salvar modelo'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-5">
+          <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+            <CardHeader className="border-b">
+              <CardTitle className="text-lg">
+                Apresentação na caixa de entrada
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                O assunto e o preheader são os primeiros elementos vistos pelo
+                destinatário.
+              </p>
+            </CardHeader>
+            <CardContent className="grid gap-5 pt-5 lg:grid-cols-2">
+              <Field label="Nome interno do modelo">
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                  placeholder="Ex.: Diagnóstico operacional"
+                />
+              </Field>
+              <Field label="Preheader">
+                <Input
+                  value={preheader}
+                  onChange={(event) => setPreheader(event.target.value)}
+                  placeholder="Complemento exibido depois do assunto"
+                />
+              </Field>
+              <div className="lg:col-span-2">
+                <Field label="Assunto apresentado ao destinatário">
+                  <Input
+                    value={subject}
+                    onChange={(event) => setSubject(event.target.value)}
+                    required
+                    placeholder="Uma ideia para a {empresa}"
+                    className="h-12 text-base"
+                  />
+                </Field>
+                <div className="mt-3 rounded-xl border bg-slate-50 px-4 py-3">
+                  <p className="truncate font-semibold">
+                    {personalize(subject) || 'Seu assunto aparecerá aqui'}
+                  </p>
+                  <p className="mt-1 truncate text-sm text-muted-foreground">
+                    {personalize(preheader) ||
+                      'O preheader complementa o assunto na caixa de entrada.'}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+            <CardHeader className="flex-row items-center justify-between gap-4 border-b">
+              <div>
+                <CardTitle className="text-lg">Conteúdo do e-mail</CardTitle>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Edite visualmente ou trabalhe diretamente no HTML.
+                </p>
+              </div>
+              <div className="flex rounded-lg bg-slate-100 p-1">
+                {(['content', 'html', 'text'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setEditorTab(tab)}
+                    className={`rounded-md px-3 py-2 text-sm font-semibold ${editorTab === tab ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+                  >
+                    {tab === 'content'
+                      ? 'Conteúdo'
+                      : tab === 'html'
+                        ? 'HTML'
+                        : 'Texto puro'}
+                  </button>
+                ))}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-5 pt-5">
+              {editorTab === 'content' && (
+                <>
+                  <Field label="Título principal">
+                    <Input
+                      value={title}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setTitle(value);
+                        setHtmlBody(buildSimpleEmail(value, textBody));
+                      }}
+                      placeholder="Menos tarefas manuais. Mais espaço para crescer."
+                      className="h-12 text-base"
+                    />
+                  </Field>
+                  <Field label="Mensagem">
+                    <Textarea
+                      value={textBody}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setTextBody(value);
+                        setHtmlBody(buildSimpleEmail(title || subject, value));
+                      }}
+                      required
+                      className="min-h-[360px] resize-y text-base leading-7"
+                      placeholder="Olá, equipe da {empresa}..."
+                    />
+                  </Field>
+                </>
+              )}
+              {editorTab === 'html' && (
+                <Field label="HTML completo">
+                  <Textarea
+                    value={htmlBody}
+                    onChange={(event) => setHtmlBody(event.target.value)}
+                    required
+                    className="min-h-[500px] resize-y font-mono text-sm leading-6"
+                    placeholder='<table role="presentation">...</table>'
+                  />
+                </Field>
+              )}
+              {editorTab === 'text' && (
+                <Field label="Versão em texto puro">
+                  <Textarea
+                    value={textBody}
+                    onChange={(event) => setTextBody(event.target.value)}
+                    required
+                    className="min-h-[500px] resize-y font-mono text-base leading-7"
+                  />
+                </Field>
+              )}
+              {error && (
+                <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                  {error}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <aside className="space-y-5">
+          <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+            <CardHeader>
+              <CardTitle className="text-base">Personalização</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm leading-6 text-muted-foreground">
+                Insira uma variável no conteúdo ativo. A prévia usa dados de
+                exemplo.
+              </p>
+              <div className="grid gap-2">
+                {['{empresa}', '{razao_social}', '{cnpj}'].map((variable) => (
+                  <Button
+                    key={variable}
+                    type="button"
+                    variant="outline"
+                    onClick={() => addVariable(variable)}
+                    className="justify-start font-mono"
+                  >
+                    {variable}
+                  </Button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-0 bg-[#0d2038] text-white shadow-sm ring-0">
+            <CardHeader>
+              <CardTitle className="text-base text-white">
+                Resultado deste modelo
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <ControlRow
+                label="Enviados"
+                value={String(template?.sent_count ?? 0)}
+              />
+              <ControlRow
+                label="Aberturas"
+                value={rate(template?.opened_count, template?.sent_count)}
+              />
+              <ControlRow
+                label="Cliques"
+                value={rate(template?.clicked_count, template?.sent_count)}
+              />
+              <ControlRow
+                label="Respostas"
+                value={rate(template?.replied_count, template?.sent_count)}
+              />
+              <p className="text-xs leading-5 text-slate-400">
+                As taxas são atualizadas pelos eventos recebidos do SendPulse.
+              </p>
+            </CardContent>
+          </Card>
+        </aside>
+      </div>
+    </form>
+  );
+}
+
 function TemplateEditorDialog({
   open,
   setOpen,
@@ -1799,24 +2121,57 @@ function PreviewDialog({
   template: Template | null;
   close: () => void;
 }) {
+  const [mobile, setMobile] = useState(false);
   return (
     <Dialog open={Boolean(template)} onOpenChange={(open) => !open && close()}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Prévia do modelo</DialogTitle>
-          <DialogDescription>{template?.subject}</DialogDescription>
-        </DialogHeader>
-        <div className="max-h-[60vh] overflow-auto rounded-lg bg-slate-100 p-5">
-          <div className="mx-auto max-w-[560px] rounded-lg bg-white p-8 shadow-sm">
-            <div className="mb-8 text-xl font-extrabold">
-              Mestre<span className="text-[#5b5cf0]">Lead</span>
+      <DialogContent className="h-[92vh] overflow-hidden p-0 sm:max-w-[96vw] xl:max-w-7xl">
+        <div className="flex h-full min-h-0 flex-col">
+          <DialogHeader>
+            <div className="flex items-center justify-between gap-4 border-b px-6 py-5 pr-14">
+              <div>
+                <DialogTitle className="text-xl">Prévia do modelo</DialogTitle>
+                <DialogDescription>
+                  Confira como a mensagem chega ao destinatário.
+                </DialogDescription>
+              </div>
+              <div className="flex rounded-lg bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => setMobile(false)}
+                  className={`rounded-md px-4 py-2 text-sm font-semibold ${!mobile ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Desktop
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMobile(true)}
+                  className={`rounded-md px-4 py-2 text-sm font-semibold ${mobile ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Celular
+                </button>
+              </div>
             </div>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-auto bg-slate-200 p-4 sm:p-8">
             <div
-              dangerouslySetInnerHTML={{ __html: template?.html_body ?? '' }}
-            />
-            <p className="mt-8 border-t pt-5 text-xs text-slate-500">
-              Prévia visual. O descadastro é incluído automaticamente no envio.
-            </p>
+              className={`mx-auto flex min-h-full flex-col overflow-hidden rounded-xl border bg-white shadow-xl transition-all ${mobile ? 'max-w-[390px]' : 'max-w-[980px]'}`}
+            >
+              <div className="border-b px-5 py-4">
+                <p className="truncate text-base font-bold">
+                  {personalize(template?.subject ?? '') || 'Assunto do e-mail'}
+                </p>
+                <p className="mt-1 truncate text-sm text-slate-500">
+                  {personalize(template?.preheader ?? '') ||
+                    'Preheader do e-mail'}
+                </p>
+              </div>
+              <iframe
+                title="Prévia segura do modelo"
+                sandbox=""
+                srcDoc={personalize(template?.html_body ?? '')}
+                className="min-h-[620px] w-full flex-1 bg-white"
+              />
+            </div>
           </div>
         </div>
       </DialogContent>
