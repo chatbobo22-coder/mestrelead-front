@@ -14,7 +14,7 @@ export async function injectorRequest(path: string, init: RequestInit = {}) {
     ...init,
     headers,
     cache: 'no-store',
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(30000),
   });
 }
 

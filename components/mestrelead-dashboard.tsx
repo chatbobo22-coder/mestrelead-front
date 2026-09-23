@@ -11,7 +11,6 @@ import {
   Clock3,
   Database,
   Eye,
-  ExternalLink,
   FileText,
   Gauge,
   Mail,
@@ -163,6 +162,60 @@ type InjectorRun = {
   updated_at: string;
   html_url: string;
   head_sha: string;
+};
+type InjectorSnapshot = {
+  run: {
+    id: number;
+    status: string;
+    conclusion?: string | null;
+    created_at: string;
+    updated_at: string;
+    html_url: string;
+  };
+  progress: number;
+  current_step: string;
+  steps: {
+    number?: number;
+    name: string;
+    status: string;
+    conclusion?: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+  }[];
+  logs: string[];
+  etl_run?: {
+    id: number;
+    competence: string;
+    status: string;
+    started_at?: string | null;
+    finished_at?: string | null;
+    files_total: number;
+    files_processed: number;
+    rows_processed: number;
+    error?: string | null;
+    cancel_requested_at?: string | null;
+  } | null;
+  files: {
+    name: string;
+    type: string;
+    status: string;
+    rows: number;
+    bytes?: number | null;
+    downloaded_at?: string | null;
+    processed_at?: string | null;
+    error?: string | null;
+  }[];
+  storage: {
+    database_bytes: number;
+    limit_bytes?: number | null;
+    schemas: Record<string, number>;
+  };
+  counts: {
+    companies: number;
+    enriched: number;
+    qualified: number;
+  };
+  warning?: string;
 };
 
 const nav: { id: View; label: string; icon: typeof Gauge }[] = [
@@ -432,6 +485,7 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
           {view === 'reports' && <Reports campaigns={campaigns} />}
           {view === 'injector' && (
             <Injector
+              key={injectorConfig ? 'ready' : 'loading'}
               config={injectorConfig}
               runs={injectorRuns}
               setNotice={setNotice}
@@ -1273,8 +1327,49 @@ function Injector({
 }) {
   const [draft, setDraft] = useState<InjectorConfig | null>(config);
   const [starting, setStarting] = useState(false);
+  const [snapshot, setSnapshot] = useState<InjectorSnapshot | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const [monitorError, setMonitorError] = useState('');
+  const [abortOpen, setAbortOpen] = useState(false);
+  const [aborting, setAborting] = useState(false);
 
-  useEffect(() => setDraft(config), [config]);
+  const liveRun = runs.find((run) => run.status !== 'completed');
+  const monitoredRun =
+    runs.find((run) => run.id === selectedRunId) ?? liveRun ?? runs[0];
+  const monitoredRunId = monitoredRun?.id;
+  const monitoredRunStatus = monitoredRun?.status;
+
+  useEffect(() => {
+    if (!monitoredRunId) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await fetchJson<InjectorSnapshot>(
+          `/api/injector/runs/${monitoredRunId}`,
+        );
+        if (!cancelled) {
+          setSnapshot(data);
+          setMonitorError('');
+        }
+      } catch (error) {
+        if (!cancelled)
+          setMonitorError(
+            error instanceof Error
+              ? error.message
+              : 'Falha ao atualizar o andamento.',
+          );
+      }
+    };
+    void load();
+    const timer =
+      monitoredRunStatus === 'completed'
+        ? undefined
+        : window.setInterval(() => void load(), 5000);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [monitoredRunId, monitoredRunStatus]);
 
   async function start(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1296,6 +1391,7 @@ function Injector({
         result.message ||
           'Injector iniciado. A execução aparecerá abaixo em instantes.',
       );
+      setSelectedRunId(null);
       window.setTimeout(() => void refresh(), 3000);
     } catch (error) {
       setNotice(
@@ -1303,6 +1399,36 @@ function Injector({
       );
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function abortRun() {
+    if (!snapshot || snapshot.run.status === 'completed') return;
+    setAborting(true);
+    try {
+      const response = await fetch(
+        `/api/injector/runs/${snapshot.run.id}/cancel`,
+        { method: 'POST' },
+      );
+      const result = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(
+          result.detail || result.error || 'Falha ao abortar a carga.',
+        );
+      setNotice(
+        'Cancelamento solicitado. O processo encerrará de forma segura em instantes.',
+      );
+      setAbortOpen(false);
+      await refresh();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Falha ao abortar a carga.',
+      );
+    } finally {
+      setAborting(false);
     }
   }
 
@@ -1326,8 +1452,236 @@ function Injector({
     <form onSubmit={start} className="space-y-5">
       <PageIntro
         title="Injector de prospects"
-        description="Defina de onde os dados serão extraídos, filtre o público e acompanhe cada execução."
+        description="Configure a carga e acompanhe processamento, logs e armazenamento em tempo quase real."
       />
+      {snapshot && (
+        <div className="space-y-5">
+          <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-slate-200/80">
+            <CardHeader className="border-b bg-white">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <CardTitle>Acompanhamento da carga</CardTitle>
+                    <Badge variant="secondary">
+                      {workflowStatus(snapshot.run.status)}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {snapshot.current_step} · atualização automática a cada 5
+                    segundos
+                  </p>
+                </div>
+                {snapshot.run.status !== 'completed' && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => setAbortOpen(true)}
+                  >
+                    <Square className="size-4 fill-current" />
+                    Abortar carga
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6 p-5">
+              <div>
+                <div className="mb-2 flex items-center justify-between text-sm">
+                  <span className="font-medium">Progresso geral</span>
+                  <span className="font-mono font-bold">
+                    {snapshot.progress}%
+                  </span>
+                </div>
+                <ProgressBar value={snapshot.progress} />
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <RuntimeMetric
+                  label="Empresas armazenadas"
+                  value={formatCount(snapshot.counts.companies)}
+                  detail="cadastros na base"
+                />
+                <RuntimeMetric
+                  label="Linhas nesta carga"
+                  value={formatCount(snapshot.etl_run?.rows_processed ?? 0)}
+                  detail="processadas até agora"
+                />
+                <RuntimeMetric
+                  label="Leads enriquecidos"
+                  value={formatCount(snapshot.counts.enriched)}
+                  detail={`${formatCount(snapshot.counts.qualified)} qualificados`}
+                />
+                <RuntimeMetric
+                  label="Banco utilizado"
+                  value={formatBytes(snapshot.storage.database_bytes)}
+                  detail={
+                    snapshot.storage.limit_bytes
+                      ? `de ${formatBytes(snapshot.storage.limit_bytes)}`
+                      : 'limite não informado'
+                  }
+                />
+              </div>
+
+              <div className="grid gap-5 xl:grid-cols-2">
+                <div className="space-y-4 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold">Arquivos da Receita</p>
+                      <p className="text-xs text-muted-foreground">
+                        Download e importação do lote atual
+                      </p>
+                    </div>
+                    <span className="font-mono text-sm font-bold">
+                      {snapshot.etl_run?.files_processed ?? 0}/
+                      {snapshot.etl_run?.files_total ?? 0}
+                    </span>
+                  </div>
+                  <ProgressBar
+                    value={percentage(
+                      snapshot.etl_run?.files_processed,
+                      snapshot.etl_run?.files_total,
+                    )}
+                  />
+                  <div className="max-h-52 space-y-2 overflow-auto pr-1">
+                    {!snapshot.files.length && (
+                      <p className="py-6 text-center text-sm text-muted-foreground">
+                        Aguardando o primeiro arquivo da carga.
+                      </p>
+                    )}
+                    {snapshot.files.map((file) => (
+                      <div
+                        key={file.name}
+                        className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs ring-1 ring-slate-200"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{file.name}</p>
+                          <p className="text-muted-foreground">
+                            {formatCount(file.rows)} linhas
+                            {file.bytes ? ` · ${formatBytes(file.bytes)}` : ''}
+                          </p>
+                        </div>
+                        <Badge variant="secondary">
+                          {fileStatus(file.status)}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                  <div>
+                    <p className="font-semibold">Armazenamento por área</p>
+                    <p className="text-xs text-muted-foreground">
+                      Espaço real ocupado pelas tabelas do projeto
+                    </p>
+                  </div>
+                  {snapshot.storage.limit_bytes && (
+                    <div>
+                      <div className="mb-2 flex justify-between text-xs">
+                        <span>Uso do limite configurado</span>
+                        <span className="font-mono font-semibold">
+                          {percentage(
+                            snapshot.storage.database_bytes,
+                            snapshot.storage.limit_bytes,
+                          )}%
+                        </span>
+                      </div>
+                      <ProgressBar
+                        value={percentage(
+                          snapshot.storage.database_bytes,
+                          snapshot.storage.limit_bytes,
+                        )}
+                        warning
+                      />
+                    </div>
+                  )}
+                  <div className="space-y-3">
+                    {Object.entries(snapshot.storage.schemas).map(
+                      ([schema, bytes]) => (
+                        <div key={schema}>
+                          <div className="mb-1.5 flex justify-between text-xs">
+                            <span>{schemaLabel(schema)}</span>
+                            <span className="font-mono font-semibold">
+                              {formatBytes(bytes)}
+                            </span>
+                          </div>
+                          <ProgressBar
+                            value={percentage(
+                              bytes,
+                              snapshot.storage.database_bytes,
+                            )}
+                            compact
+                          />
+                        </div>
+                      ),
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-5 xl:grid-cols-[.75fr_1.25fr]">
+                <div className="rounded-xl border bg-white p-4">
+                  <p className="mb-3 font-semibold">Etapas</p>
+                  <div className="space-y-2">
+                    {snapshot.steps.map((step) => (
+                      <div
+                        key={`${step.number}-${step.name}`}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        {step.status === 'completed' ? (
+                          step.conclusion === 'success' ? (
+                            <CheckCircle2 className="size-4 text-emerald-600" />
+                          ) : (
+                            <XCircle className="size-4 text-rose-600" />
+                          )
+                        ) : step.status === 'in_progress' ? (
+                          <Activity className="size-4 animate-pulse text-violet-600" />
+                        ) : (
+                          <Clock3 className="size-4 text-slate-400" />
+                        )}
+                        <span
+                          className={
+                            step.status === 'in_progress'
+                              ? 'font-semibold text-slate-950'
+                              : 'text-slate-600'
+                          }
+                        >
+                          {step.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="overflow-hidden rounded-xl bg-[#071424] text-white">
+                  <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                    <div>
+                      <p className="font-semibold">Log em tempo real</p>
+                      <p className="text-xs text-slate-400">
+                        Últimas mensagens da execução
+                      </p>
+                    </div>
+                    <Activity className="size-4 text-violet-300" />
+                  </div>
+                  <div className="h-72 overflow-auto p-4 font-mono text-[11px] leading-5 text-slate-300">
+                    {!snapshot.logs.length && (
+                      <p className="text-slate-500">
+                        Aguardando mensagens do processamento…
+                      </p>
+                    )}
+                    {snapshot.logs.map((line, index) => (
+                      <p key={`${index}-${line.slice(0, 24)}`} className="break-all">
+                        {line}
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {monitorError && (
+                <p className="text-sm text-amber-700">{monitorError}</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
       <div className="grid gap-5 xl:grid-cols-[1.25fr_.75fr]">
         <SettingsCard title="Origem e recorte da extração">
           <div className="grid gap-4 md:grid-cols-2">
@@ -1337,12 +1691,11 @@ function Injector({
             <Field label="Endereço da fonte">
               <Input value={draft.base_url} readOnly />
             </Field>
-            <Field label="Competência (AAAAMM)">
+            <Field label="Competência (AAAA-MM)">
               <Input
                 value={draft.competence}
-                inputMode="numeric"
-                pattern="[0-9]{6}"
-                required
+                placeholder="Vazio para usar a mais recente"
+                pattern="[0-9]{4}-(0[1-9]|1[0-2])"
                 onChange={(event) =>
                   setDraft({ ...draft, competence: event.target.value })
                 }
@@ -1506,14 +1859,14 @@ function Injector({
                   </TableCell>
                   <TableCell>{workflowConclusion(run.conclusion)}</TableCell>
                   <TableCell className="pr-5 text-right">
-                    <a
-                      href={run.html_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-8 items-center gap-2 rounded-md px-3 text-sm font-medium hover:bg-slate-100"
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedRunId(run.id)}
                     >
-                      Abrir <ExternalLink className="size-4" />
-                    </a>
+                      Acompanhar
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -1521,6 +1874,37 @@ function Injector({
           </Table>
         </CardContent>
       </Card>
+      <Dialog open={abortOpen} onOpenChange={setAbortOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Abortar esta carga?</DialogTitle>
+            <DialogDescription>
+              O processamento será cancelado no GitHub. Os dados já gravados
+              permanecem seguros no banco e uma próxima execução poderá
+              continuar a carga.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAbortOpen(false)}
+              disabled={aborting}
+            >
+              Continuar executando
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void abortRun()}
+              disabled={aborting}
+            >
+              {aborting ? <Activity className="animate-spin" /> : <Square />}
+              {aborting ? 'Abortando…' : 'Sim, abortar carga'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }
@@ -2578,6 +2962,91 @@ function TemplateMetric({ label, value }: { label: string; value: string }) {
 function rate(value?: number, total?: number) {
   if (!total) return '0%';
   return `${((Number(value ?? 0) / total) * 100).toFixed(1).replace('.', ',')}%`;
+}
+
+function ProgressBar({
+  value,
+  warning = false,
+  compact = false,
+}: {
+  value: number;
+  warning?: boolean;
+  compact?: boolean;
+}) {
+  const safeValue = Math.min(100, Math.max(0, Number(value) || 0));
+  const color = warning && safeValue >= 85 ? 'bg-rose-500' : 'bg-violet-600';
+  return (
+    <div
+      className={`${compact ? 'h-1.5' : 'h-2.5'} overflow-hidden rounded-full bg-slate-200`}
+    >
+      <div
+        className={`h-full rounded-full ${color} transition-[width] duration-500`}
+        style={{ width: `${safeValue}%` }}
+      />
+    </div>
+  );
+}
+
+function RuntimeMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-slate-200">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="mt-1 font-mono text-2xl font-bold text-slate-950">
+        {value}
+      </p>
+      <p className="mt-1 text-xs text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
+function percentage(value?: number | null, total?: number | null) {
+  if (!total) return 0;
+  return Math.min(100, Math.max(0, (Number(value ?? 0) / total) * 100));
+}
+
+function formatCount(value?: number | null) {
+  return new Intl.NumberFormat('pt-BR').format(Number(value ?? 0));
+}
+
+function formatBytes(value?: number | null) {
+  const bytes = Number(value ?? 0);
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+  );
+  return `${(bytes / 1024 ** index).toLocaleString('pt-BR', {
+    maximumFractionDigits: index === 0 ? 0 : 1,
+  })} ${units[index]}`;
+}
+
+function schemaLabel(schema: string) {
+  const labels: Record<string, string> = {
+    cnpj: 'Empresas e dados da Receita',
+    intelligence: 'Inteligência comercial',
+    etl: 'Controle das cargas',
+  };
+  return labels[schema] ?? schema;
+}
+
+function fileStatus(status: string) {
+  const labels: Record<string, string> = {
+    pending: 'Aguardando',
+    downloading: 'Baixando',
+    processing: 'Processando',
+    success: 'Concluído',
+    failed: 'Falhou',
+  };
+  return labels[status] ?? status;
 }
 
 function percentWidth(value?: number, total?: number) {
