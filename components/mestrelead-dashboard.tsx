@@ -220,6 +220,8 @@ type InjectorSnapshot = {
     completed_checks: number;
     failed_checks: number;
     running_checks: number;
+    core_processed_checks: number;
+    core_total_checks: number;
     current_source?: string | null;
     latest_source?: string | null;
     sources: {
@@ -1571,11 +1573,25 @@ function Injector({
                       </p>
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {formatCount(snapshot.intelligence.profiles)} perfis ·{' '}
-                      {formatCount(snapshot.intelligence.failed_checks)} falhas
+                      {formatCount(
+                        snapshot.intelligence.core_processed_checks,
+                      )}
+                      /{formatCount(snapshot.intelligence.core_total_checks)}{' '}
+                      consultas essenciais
                     </span>
                   </div>
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  <ProgressBar
+                    value={percentage(
+                      snapshot.intelligence.core_processed_checks,
+                      snapshot.intelligence.core_total_checks,
+                    )}
+                    compact
+                  />
+                  <p className="mt-2 text-right text-[11px] text-muted-foreground">
+                    {formatCount(snapshot.intelligence.profiles)} perfis ·{' '}
+                    {formatCount(snapshot.intelligence.failed_checks)} falhas
+                  </p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                     {snapshot.intelligence.sources.map((source) => (
                       <div
                         key={source.source}
