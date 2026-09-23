@@ -215,6 +215,21 @@ type InjectorSnapshot = {
     enriched: number;
     qualified: number;
   };
+  intelligence?: {
+    profiles: number;
+    completed_checks: number;
+    failed_checks: number;
+    running_checks: number;
+    current_source?: string | null;
+    latest_source?: string | null;
+    sources: {
+      source: string;
+      completed: number;
+      failed: number;
+      running: number;
+      total: number;
+    }[];
+  };
   warning?: string;
 };
 
@@ -1479,8 +1494,10 @@ function Injector({
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {snapshot.current_step} · atualização automática a cada 3
-                    segundos
+                    {snapshot.intelligence?.current_source
+                      ? `Consultando ${intelligenceSourceLabel(snapshot.intelligence.current_source)}`
+                      : snapshot.current_step}{' '}
+                    · atualização automática a cada 3 segundos
                   </p>
                 </div>
                 {snapshot.run.status !== 'completed' && (
@@ -1506,7 +1523,7 @@ function Injector({
                 <ProgressBar value={snapshot.progress} />
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <RuntimeMetric
                   label="Empresas armazenadas"
                   value={formatCount(snapshot.counts.companies)}
@@ -1523,6 +1540,17 @@ function Injector({
                   detail={`${formatCount(snapshot.counts.qualified)} qualificados`}
                 />
                 <RuntimeMetric
+                  label="Consultas de inteligência"
+                  value={formatCount(
+                    snapshot.intelligence?.completed_checks ?? 0,
+                  )}
+                  detail={
+                    snapshot.intelligence?.current_source
+                      ? `agora: ${intelligenceSourceLabel(snapshot.intelligence.current_source)}`
+                      : `${formatCount(snapshot.intelligence?.profiles ?? 0)} perfis analisados`
+                  }
+                />
+                <RuntimeMetric
                   label="Banco utilizado"
                   value={formatBytes(snapshot.storage.database_bytes)}
                   detail={
@@ -1532,6 +1560,48 @@ function Injector({
                   }
                 />
               </div>
+
+              {!!snapshot.intelligence?.sources.length && (
+                <div className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                  <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-semibold">Fontes de inteligência</p>
+                      <p className="text-xs text-muted-foreground">
+                        Avanço real das consultas públicas e licenciadas
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {formatCount(snapshot.intelligence.profiles)} perfis ·{' '}
+                      {formatCount(snapshot.intelligence.failed_checks)} falhas
+                    </span>
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {snapshot.intelligence.sources.map((source) => (
+                      <div
+                        key={source.source}
+                        className="rounded-lg bg-white px-3 py-2 ring-1 ring-slate-200"
+                      >
+                        <div className="flex items-center justify-between gap-3 text-xs">
+                          <span className="truncate font-medium">
+                            {intelligenceSourceLabel(source.source)}
+                          </span>
+                          <span className="font-mono font-semibold">
+                            {formatCount(source.completed)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {source.running
+                            ? `${formatCount(source.running)} em processamento`
+                            : `${formatCount(source.total)} verificações`}
+                          {source.failed
+                            ? ` · ${formatCount(source.failed)} falhas`
+                            : ''}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-5 xl:grid-cols-2">
                 <div className="space-y-4 rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
@@ -3071,6 +3141,25 @@ function schemaLabel(schema: string) {
   return labels[schema] ?? schema;
 }
 
+function intelligenceSourceLabel(source: string) {
+  const labels: Record<string, string> = {
+    receita: 'Receita Federal',
+    email_quality: 'Qualidade do e-mail',
+    website: 'Site institucional',
+    rdap: 'Registro do domínio',
+    cvm: 'CVM',
+    gdelt: 'Notícias (GDELT)',
+    pncp: 'Contratações públicas',
+    inpi: 'Marcas e patentes',
+    google_places: 'Google Business',
+    pagespeed: 'PageSpeed',
+    meta_ads: 'Meta Ads',
+    google_ads: 'Google Ads',
+    people_provider: 'Pessoas e decisores',
+  };
+  return labels[source] ?? source;
+}
+
 function runtimeLogClassName(line: string) {
   const normalized = line.toUpperCase();
   if (
@@ -3101,6 +3190,7 @@ function runtimeLogClassName(line: string) {
   if (
     normalized.includes('[ETL]') ||
     normalized.includes('[BASE]') ||
+    normalized.includes('[INTELIGÊNCIA]') ||
     normalized.includes('[ARMAZENAMENTO]') ||
     normalized.includes('[ARQUIVO:')
   ) {
