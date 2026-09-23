@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
@@ -1332,12 +1332,15 @@ function Injector({
   const [monitorError, setMonitorError] = useState('');
   const [abortOpen, setAbortOpen] = useState(false);
   const [aborting, setAborting] = useState(false);
+  const logViewportRef = useRef<HTMLDivElement | null>(null);
 
   const liveRun = runs.find((run) => run.status !== 'completed');
   const monitoredRun =
     runs.find((run) => run.id === selectedRunId) ?? liveRun ?? runs[0];
   const monitoredRunId = monitoredRun?.id;
   const monitoredRunStatus = monitoredRun?.status;
+  const logCount = snapshot?.logs.length ?? 0;
+  const latestLogTail = snapshot?.logs.slice(-8).join('\n') ?? '';
 
   useEffect(() => {
     if (!monitoredRunId) return;
@@ -1364,12 +1367,21 @@ function Injector({
     const timer =
       monitoredRunStatus === 'completed'
         ? undefined
-        : window.setInterval(() => void load(), 5000);
+        : window.setInterval(() => void load(), 3000);
     return () => {
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
   }, [monitoredRunId, monitoredRunStatus]);
+
+  useEffect(() => {
+    const viewport = logViewportRef.current;
+    if (!viewport) return;
+    const frame = window.requestAnimationFrame(() => {
+      viewport.scrollTop = viewport.scrollHeight;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [latestLogTail, logCount, monitoredRunId]);
 
   async function start(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -1467,7 +1479,7 @@ function Injector({
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {snapshot.current_step} · atualização automática a cada 5
+                    {snapshot.current_step} · atualização automática a cada 3
                     segundos
                   </p>
                 </div>
@@ -1582,7 +1594,8 @@ function Injector({
                           {percentage(
                             snapshot.storage.database_bytes,
                             snapshot.storage.limit_bytes,
-                          )}%
+                          )}
+                          %
                         </span>
                       </div>
                       <ProgressBar
@@ -1656,21 +1669,41 @@ function Injector({
                     <div>
                       <p className="font-semibold">Log em tempo real</p>
                       <p className="text-xs text-slate-400">
-                        Últimas mensagens da execução
+                        Etapas, arquivos, linhas, qualidade e armazenamento
                       </p>
                     </div>
-                    <Activity className="size-4 text-violet-300" />
+                    <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-300">
+                      <span className="relative flex size-2">
+                        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                        <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
+                      </span>
+                      Mais recente
+                    </div>
                   </div>
-                  <div className="h-72 overflow-auto p-4 font-mono text-[11px] leading-5 text-slate-300">
+                  <div
+                    ref={logViewportRef}
+                    role="log"
+                    aria-live="polite"
+                    aria-label="Log da execução do Injector"
+                    className="h-[26rem] scroll-smooth overflow-auto p-3 font-mono text-[11px] leading-5 text-slate-300"
+                  >
                     {!snapshot.logs.length && (
-                      <p className="text-slate-500">
+                      <p className="p-2 text-slate-500">
                         Aguardando mensagens do processamento…
                       </p>
                     )}
                     {snapshot.logs.map((line, index) => (
-                      <p key={`${index}-${line.slice(0, 24)}`} className="break-all">
-                        {line}
-                      </p>
+                      <div
+                        key={`${index}-${line.slice(0, 24)}`}
+                        className={`grid grid-cols-[2.25rem_1fr] gap-2 border-l-2 px-2 py-0.5 ${runtimeLogClassName(line)}`}
+                      >
+                        <span className="select-none text-right text-slate-600">
+                          {String(index + 1).padStart(3, '0')}
+                        </span>
+                        <p className="whitespace-pre-wrap break-words">
+                          {line}
+                        </p>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -3036,6 +3069,44 @@ function schemaLabel(schema: string) {
     etl: 'Controle das cargas',
   };
   return labels[schema] ?? schema;
+}
+
+function runtimeLogClassName(line: string) {
+  const normalized = line.toUpperCase();
+  if (
+    normalized.includes('[ERROR') ||
+    normalized.includes('[ERRO') ||
+    normalized.includes('[FAILED') ||
+    normalized.includes('TRACEBACK')
+  ) {
+    return 'border-rose-500 bg-rose-500/10 text-rose-200';
+  }
+  if (
+    normalized.includes('[WARNING') ||
+    normalized.includes('[AVISO') ||
+    normalized.includes('TIMEOUT')
+  ) {
+    return 'border-amber-400 bg-amber-400/10 text-amber-100';
+  }
+  if (normalized.includes('[AGORA]') || normalized.includes('[IN_PROGRESS]')) {
+    return 'border-violet-400 bg-violet-400/10 text-violet-100';
+  }
+  if (
+    normalized.includes('[SUCCESS') ||
+    normalized.includes('[COMPLETED]') ||
+    normalized.includes('CONCLUÍDO')
+  ) {
+    return 'border-emerald-500/70 text-emerald-200';
+  }
+  if (
+    normalized.includes('[ETL]') ||
+    normalized.includes('[BASE]') ||
+    normalized.includes('[ARMAZENAMENTO]') ||
+    normalized.includes('[ARQUIVO:')
+  ) {
+    return 'border-sky-400/70 bg-sky-400/5 text-sky-100';
+  }
+  return 'border-transparent text-slate-300';
 }
 
 function fileStatus(status: string) {
