@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
+  Columns3,
   Database,
   Eye,
   FileText,
@@ -55,6 +56,7 @@ type View =
   | 'campaigns'
   | 'templates'
   | 'contacts'
+  | 'crm'
   | 'queue'
   | 'reports'
   | 'injector'
@@ -93,10 +95,96 @@ type Contact = {
   company: string;
   company_name: string;
   email: string;
+  phone?: string | null;
+  whatsapp?: string | null;
   score: number;
+  confidence_score: number;
+  lead_quality: string;
+  profile_score: number;
+  data_confidence_score: number;
+  qualification_reasons: string[];
   status: string;
   last_subject?: string | null;
   opens: number;
+};
+type ContactMetrics = {
+  total: number;
+  quality_a: number;
+  quality_b: number;
+  with_whatsapp: number;
+  public_profile: number;
+  average_score: number;
+};
+type ContactPage = {
+  contacts: Contact[];
+  metrics: ContactMetrics;
+  pagination: {
+    page: number;
+    page_size: number;
+    total: number;
+    total_pages: number;
+  };
+};
+type CrmStage =
+  | 'ready'
+  | 'contacted'
+  | 'replied'
+  | 'qualified'
+  | 'meeting'
+  | 'proposal'
+  | 'won'
+  | 'lost';
+type CrmServiceType =
+  | 'prospecting'
+  | 'qualification'
+  | 'demo'
+  | 'proposal'
+  | 'negotiation'
+  | 'follow_up'
+  | 'reactivation'
+  | 'after_sales';
+type CrmCase = {
+  id: number;
+  lead_id: number;
+  company: string;
+  company_name: string;
+  email: string;
+  phone?: string | null;
+  whatsapp?: string | null;
+  score: number;
+  lead_quality: string;
+  service_type: CrmServiceType;
+  stage: CrmStage;
+  owner_name?: string | null;
+  notes?: string | null;
+  next_action_at?: string | null;
+  updated_at: string;
+};
+type LeadDetail = {
+  lead: Contact & {
+    cnpj: string;
+    trade_name?: string | null;
+    source_payload?: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
+  };
+  case?: CrmCase | null;
+  messages: {
+    id: number;
+    campaign: string;
+    channel: string;
+    subject?: string | null;
+    status: string;
+    updated_at: string;
+  }[];
+  history: {
+    id: number;
+    event_type: string;
+    from_stage?: string | null;
+    to_stage?: string | null;
+    note?: string | null;
+    created_at: string;
+  }[];
 };
 type QueueItem = {
   id: number;
@@ -240,6 +328,7 @@ const nav: { id: View; label: string; icon: typeof Gauge }[] = [
   { id: 'campaigns', label: 'Campanhas', icon: Send },
   { id: 'templates', label: 'Modelos', icon: FileText },
   { id: 'contacts', label: 'Contatos', icon: Users },
+  { id: 'crm', label: 'CRM', icon: Columns3 },
   { id: 'queue', label: 'Fila de envio', icon: Activity },
   { id: 'reports', label: 'Relatórios', icon: BarChart3 },
   { id: 'injector', label: 'Injector', icon: Database },
@@ -275,7 +364,6 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
   const [view, setView] = useState<View>('overview');
   const [templates, setTemplates] = useState<Template[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
-  const [contacts, setContacts] = useState<Contact[]>([]);
   const [queue, setQueue] = useState<QueueSnapshot>(emptyQueue);
   const [settings, setSettings] = useState<OperationalSettings | null>(null);
   const [injectorConfig, setInjectorConfig] = useState<InjectorConfig | null>(
@@ -295,7 +383,6 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
     const results = await Promise.allSettled([
       fetchJson<{ templates: Template[] }>('/api/templates'),
       fetchJson<{ campaigns: Campaign[] }>('/api/campaigns'),
-      fetchJson<{ contacts: Contact[] }>('/api/contacts'),
       fetchJson<QueueSnapshot>('/api/queue'),
       fetchJson<{ settings: OperationalSettings }>('/api/settings'),
       fetchJson<{ config: InjectorConfig }>('/api/injector/config'),
@@ -314,15 +401,14 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
     };
     apply<{ templates: Template[] }>(0, (data) => setTemplates(data.templates));
     apply<{ campaigns: Campaign[] }>(1, (data) => setCampaigns(data.campaigns));
-    apply<{ contacts: Contact[] }>(2, (data) => setContacts(data.contacts));
-    apply<QueueSnapshot>(3, setQueue);
-    apply<{ settings: OperationalSettings }>(4, (data) =>
+    apply<QueueSnapshot>(2, setQueue);
+    apply<{ settings: OperationalSettings }>(3, (data) =>
       setSettings(data.settings),
     );
-    apply<{ config: InjectorConfig }>(5, (data) =>
+    apply<{ config: InjectorConfig }>(4, (data) =>
       setInjectorConfig(data.config),
     );
-    apply<{ runs: InjectorRun[] }>(6, (data) => setInjectorRuns(data.runs));
+    apply<{ runs: InjectorRun[] }>(5, (data) => setInjectorRuns(data.runs));
     setDataError([...new Set(errors)].join(' • '));
     setLoading(false);
   }
@@ -489,7 +575,8 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
                 }}
               />
             ))}
-          {view === 'contacts' && <Contacts contacts={contacts} />}
+          {view === 'contacts' && <Contacts />}
+          {view === 'crm' && <Crm setNotice={setNotice} />}
           {view === 'queue' && (
             <Queue
               paused={paused}
@@ -876,16 +963,74 @@ function Templates({
   );
 }
 
-function Contacts({ contacts }: { contacts: Contact[] }) {
+const emptyContactPage: ContactPage = {
+  contacts: [],
+  metrics: {
+    total: 0,
+    quality_a: 0,
+    quality_b: 0,
+    with_whatsapp: 0,
+    public_profile: 0,
+    average_score: 0,
+  },
+  pagination: { page: 1, page_size: 25, total: 0, total_pages: 1 },
+};
+
+function useContactPage(page: number, query: string) {
+  const [data, setData] = useState<ContactPage>(emptyContactPage);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(
+      () => {
+        setLoading(true);
+        const params = new URLSearchParams({
+          page: String(page),
+          page_size: '25',
+        });
+        if (query.trim()) params.set('q', query.trim());
+        fetch(`/api/contacts?${params}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+          .then(async (response) => {
+            const body = (await response.json()) as ContactPage & {
+              error?: string;
+              detail?: string;
+            };
+            if (!response.ok)
+              throw new Error(
+                body.error || body.detail || 'Falha ao carregar contatos',
+              );
+            setData(body);
+            setError('');
+          })
+          .catch((reason) => {
+            if (reason instanceof DOMException && reason.name === 'AbortError')
+              return;
+            setError(
+              reason instanceof Error
+                ? reason.message
+                : 'Falha ao carregar contatos',
+            );
+          })
+          .finally(() => setLoading(false));
+      },
+      query ? 350 : 0,
+    );
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [page, query]);
+  return { data, loading, error };
+}
+
+function Contacts() {
   const [query, setQuery] = useState('');
-  const normalized = query.trim().toLocaleLowerCase('pt-BR');
-  const visibleContacts = normalized
-    ? contacts.filter((contact) =>
-        `${contact.company} ${contact.email}`
-          .toLocaleLowerCase('pt-BR')
-          .includes(normalized),
-      )
-    : contacts;
+  const [page, setPage] = useState(1);
+  const { data, loading, error } = useContactPage(page, query);
   return (
     <div className="space-y-5">
       <PageIntro
@@ -893,6 +1038,58 @@ function Contacts({ contacts }: { contacts: Contact[] }) {
         description="Leads sincronizados e prontos para segmentação."
         action="Importar contatos"
       />
+      <section
+        className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5"
+        aria-label="Resumo dos leads"
+      >
+        <Metric
+          label="Leads com e-mail"
+          value={formatCount(data.metrics.total)}
+          detail="qualificados e sincronizados"
+          icon={Users}
+        />
+        <Metric
+          label="Qualidade A"
+          value={formatCount(data.metrics.quality_a)}
+          detail="score digital ≥ 70 + sinal forte"
+          icon={ShieldCheck}
+          positive
+        />
+        <Metric
+          label="Qualidade B"
+          value={formatCount(data.metrics.quality_b)}
+          detail="digital ≥ 60 ou perfil público"
+          icon={Activity}
+        />
+        <Metric
+          label="Com WhatsApp"
+          value={formatCount(data.metrics.with_whatsapp)}
+          detail="canal disponível na origem"
+          icon={Send}
+        />
+        <Metric
+          label="Perfil público"
+          value={formatCount(data.metrics.public_profile)}
+          detail={`score digital médio ${Number(data.metrics.average_score || 0).toLocaleString('pt-BR')}`}
+          icon={Gauge}
+        />
+      </section>
+      <Card className="border-indigo-100 bg-indigo-50/60 shadow-none">
+        <CardContent className="grid gap-2 p-4 text-sm lg:grid-cols-3">
+          <p>
+            <strong>Score digital 0–100:</strong> 70+ forte, 60–69 bom, 40–59
+            revisar, abaixo de 40 fraco.
+          </p>
+          <p>
+            <strong>Qualidade A:</strong> confiança mínima de 70 e sinal
+            comercial forte.
+          </p>
+          <p>
+            <strong>Qualidade B:</strong> atende ao digital ou possui perfil
+            público completo e verificável.
+          </p>
+        </CardContent>
+      </Card>
       <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
         <CardHeader className="border-b">
           <div className="relative max-w-sm">
@@ -901,9 +1098,13 @@ function Contacts({ contacts }: { contacts: Contact[] }) {
               className="h-10 pl-9"
               placeholder="Buscar empresa ou e-mail"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
             />
           </div>
+          {error && <p className="text-sm text-rose-600">{error}</p>}
         </CardHeader>
         <CardContent className="px-0">
           <Table>
@@ -911,30 +1112,58 @@ function Contacts({ contacts }: { contacts: Contact[] }) {
               <TableRow>
                 <TableHead className="pl-5">Empresa</TableHead>
                 <TableHead>E-mail</TableHead>
-                <TableHead>Score</TableHead>
+                <TableHead>WhatsApp</TableHead>
+                <TableHead>Qualidade</TableHead>
+                <TableHead>Scores</TableHead>
                 <TableHead>Último assunto apresentado</TableHead>
                 <TableHead className="text-right">Aberturas</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {!visibleContacts.length && (
+              {!data.contacts.length && (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={8}
                     className="h-24 text-center text-muted-foreground"
                   >
-                    Nenhum contato retornado pelo outreach.
+                    {loading
+                      ? 'Carregando contatos…'
+                      : 'Nenhum contato encontrado.'}
                   </TableCell>
                 </TableRow>
               )}
-              {visibleContacts.map((contact) => (
+              {data.contacts.map((contact) => (
                 <TableRow key={contact.id} className="h-15">
                   <TableCell className="pl-5 font-semibold">
                     {contact.company}
                   </TableCell>
                   <TableCell>{contact.email}</TableCell>
-                  <TableCell>{contact.score}</TableCell>
+                  <TableCell>
+                    {contact.whatsapp ? (
+                      <a
+                        className="font-medium text-emerald-700 hover:underline"
+                        href={contact.whatsapp}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Abrir conversa
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <QualityBadge quality={contact.lead_quality} />
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <span className="font-mono font-semibold">
+                      {contact.score}
+                    </span>
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      público {contact.profile_score}
+                    </span>
+                  </TableCell>
                   <TableCell className="max-w-[340px] truncate text-muted-foreground">
                     {contact.last_subject ?? '—'}
                   </TableCell>
@@ -951,9 +1180,485 @@ function Contacts({ contacts }: { contacts: Contact[] }) {
             </TableBody>
           </Table>
         </CardContent>
+        <div className="flex flex-col gap-3 border-t px-5 py-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-muted-foreground">
+            {formatCount(data.pagination.total)} resultados · página{' '}
+            {data.pagination.page} de {data.pagination.total_pages}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((value) => value - 1)}
+            >
+              Anterior
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page >= data.pagination.total_pages || loading}
+              onClick={() => setPage((value) => value + 1)}
+            >
+              Próxima
+            </Button>
+          </div>
+        </div>
       </Card>
     </div>
   );
+}
+
+const crmStages: { id: CrmStage; label: string }[] = [
+  { id: 'ready', label: 'Novo' },
+  { id: 'contacted', label: 'Em contato' },
+  { id: 'replied', label: 'Respondeu' },
+  { id: 'qualified', label: 'Qualificado' },
+  { id: 'meeting', label: 'Reunião' },
+  { id: 'proposal', label: 'Proposta' },
+  { id: 'won', label: 'Ganho' },
+  { id: 'lost', label: 'Perdido' },
+];
+const crmServiceTypes: { id: CrmServiceType; label: string }[] = [
+  { id: 'prospecting', label: 'Prospecção' },
+  { id: 'qualification', label: 'Qualificação' },
+  { id: 'demo', label: 'Demonstração' },
+  { id: 'proposal', label: 'Proposta' },
+  { id: 'negotiation', label: 'Negociação' },
+  { id: 'follow_up', label: 'Follow-up' },
+  { id: 'reactivation', label: 'Reativação' },
+  { id: 'after_sales', label: 'Pós-venda' },
+];
+
+function Crm({ setNotice }: { setNotice: (notice: string) => void }) {
+  const [mode, setMode] = useState<'leads' | 'kanban'>('leads');
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(1);
+  const { data, loading } = useContactPage(page, query);
+  const [cases, setCases] = useState<CrmCase[]>([]);
+  const [selected, setSelected] = useState<LeadDetail | null>(null);
+  const [starting, setStarting] = useState<Contact | null>(null);
+  const [serviceType, setServiceType] = useState<CrmServiceType>('prospecting');
+
+  async function loadCases() {
+    const response = await fetchJson<{ cases: CrmCase[] }>('/api/crm');
+    setCases(response.cases);
+  }
+  useEffect(() => {
+    void fetchJson<{ cases: CrmCase[] }>('/api/crm')
+      .then((response) => setCases(response.cases))
+      .catch(() => setNotice('Não foi possível carregar o Kanban do CRM.'));
+  }, [setNotice]);
+
+  async function openLead(id: number) {
+    try {
+      setSelected(await fetchJson<LeadDetail>(`/api/crm/leads/${id}`));
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Falha ao abrir o lead.',
+      );
+    }
+  }
+
+  async function startCase() {
+    if (!starting) return;
+    try {
+      const response = await fetch('/api/crm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_id: starting.id,
+          service_type: serviceType,
+        }),
+      });
+      if (!response.ok)
+        throw new Error('Não foi possível iniciar o atendimento.');
+      await loadCases();
+      setStarting(null);
+      setMode('kanban');
+      setNotice('Lead colocado em atendimento.');
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Falha ao iniciar atendimento.',
+      );
+    }
+  }
+
+  async function moveCase(item: CrmCase, stage: CrmStage) {
+    const response = await fetch(`/api/crm/${item.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage }),
+    });
+    if (!response.ok) {
+      setNotice('Não foi possível mover o atendimento.');
+      return;
+    }
+    setCases((current) =>
+      current.map((row) => (row.id === item.id ? { ...row, stage } : row)),
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        title="CRM"
+        description="Selecione leads, consulte o perfil completo e acompanhe cada atendimento."
+      />
+      <div className="flex gap-2">
+        <Button
+          variant={mode === 'leads' ? 'default' : 'outline'}
+          onClick={() => setMode('leads')}
+        >
+          <Users /> Lista de leads
+        </Button>
+        <Button
+          variant={mode === 'kanban' ? 'default' : 'outline'}
+          onClick={() => setMode('kanban')}
+        >
+          <Columns3 /> Kanban <Badge variant="secondary">{cases.length}</Badge>
+        </Button>
+      </div>
+      {mode === 'leads' ? (
+        <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+          <CardHeader className="border-b">
+            <div className="relative max-w-sm">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Buscar empresa, e-mail ou CNPJ"
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
+          </CardHeader>
+          <CardContent className="px-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="pl-5">Empresa</TableHead>
+                  <TableHead>Contato</TableHead>
+                  <TableHead>Qualidade</TableHead>
+                  <TableHead>Score digital</TableHead>
+                  <TableHead className="text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {!data.contacts.length && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={5}
+                      className="h-24 text-center text-muted-foreground"
+                    >
+                      {loading
+                        ? 'Carregando leads…'
+                        : 'Nenhum lead encontrado.'}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {data.contacts.map((contact) => (
+                  <TableRow key={contact.id}>
+                    <TableCell className="pl-5 font-semibold">
+                      {contact.company}
+                    </TableCell>
+                    <TableCell>
+                      <p>{contact.email}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {contact.phone || 'Telefone não informado'}
+                      </p>
+                    </TableCell>
+                    <TableCell>
+                      <QualityBadge quality={contact.lead_quality} />
+                    </TableCell>
+                    <TableCell className="font-mono font-semibold">
+                      {contact.score}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void openLead(contact.id)}
+                        >
+                          <Eye /> Detalhes
+                        </Button>
+                        <Button size="sm" onClick={() => setStarting(contact)}>
+                          Colocar em atendimento
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+          <div className="flex items-center justify-between border-t px-5 py-4 text-sm">
+            <span className="text-muted-foreground">
+              {formatCount(data.pagination.total)} leads · página{' '}
+              {data.pagination.page} de {data.pagination.total_pages}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page <= 1}
+                onClick={() => setPage((value) => value - 1)}
+              >
+                Anterior
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page >= data.pagination.total_pages}
+                onClick={() => setPage((value) => value + 1)}
+              >
+                Próxima
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <div className="overflow-x-auto pb-4">
+          <div className="grid min-w-[1840px] grid-cols-8 gap-3">
+            {crmStages.map((stage) => {
+              const items = cases.filter((item) => item.stage === stage.id);
+              return (
+                <section
+                  key={stage.id}
+                  className="min-h-[420px] rounded-xl bg-slate-100 p-3"
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="font-semibold">{stage.label}</h3>
+                    <Badge variant="secondary">{items.length}</Badge>
+                  </div>
+                  <div className="space-y-3">
+                    {items.map((item) => (
+                      <Card key={item.id} className="gap-3 p-3 shadow-sm">
+                        <button
+                          className="text-left font-semibold hover:text-indigo-600"
+                          onClick={() => void openLead(item.lead_id)}
+                        >
+                          {item.company}
+                        </button>
+                        <div className="text-xs text-muted-foreground">
+                          <p>{serviceTypeLabel(item.service_type)}</p>
+                          <p>{item.email}</p>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <QualityBadge quality={item.lead_quality} />
+                          <span className="font-mono text-xs">
+                            {item.score}
+                          </span>
+                        </div>
+                        <select
+                          aria-label="Mover atendimento"
+                          className="h-8 w-full rounded-md border bg-white px-2 text-xs"
+                          value={item.stage}
+                          onChange={(event) =>
+                            void moveCase(item, event.target.value as CrmStage)
+                          }
+                        >
+                          {crmStages.map((target) => (
+                            <option key={target.id} value={target.id}>
+                              {target.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Card>
+                    ))}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <Dialog
+        open={Boolean(starting)}
+        onOpenChange={(open) => !open && setStarting(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Colocar em atendimento</DialogTitle>
+            <DialogDescription>{starting?.company}</DialogDescription>
+          </DialogHeader>
+          <label className="space-y-2 text-sm font-medium">
+            Tipo de atendimento
+            <select
+              className="h-10 w-full rounded-md border bg-white px-3 font-normal"
+              value={serviceType}
+              onChange={(event) =>
+                setServiceType(event.target.value as CrmServiceType)
+              }
+            >
+              {crmServiceTypes.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStarting(null)}>
+              Cancelar
+            </Button>
+            <Button onClick={() => void startCase()}>
+              Iniciar atendimento
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <LeadDetailDialog detail={selected} close={() => setSelected(null)} />
+    </div>
+  );
+}
+
+function LeadDetailDialog({
+  detail,
+  close,
+}: {
+  detail: LeadDetail | null;
+  close: () => void;
+}) {
+  const payload = detail?.lead.source_payload ?? {};
+  const fields: [string, unknown][] = [
+    ['CNPJ', detail?.lead.cnpj],
+    ['Razão social', detail?.lead.company_name],
+    ['Telefone', detail?.lead.phone],
+    ['WhatsApp', detail?.lead.whatsapp],
+    ['CNAE', payload.cnae_fiscal],
+    [
+      'Município/UF',
+      [payload.municipio, payload.uf].filter(Boolean).join(' / '),
+    ],
+    ['Porte', payload.porte_empresa],
+    [
+      'Capital social',
+      payload.capital_social
+        ? `R$ ${Number(payload.capital_social).toLocaleString('pt-BR')}`
+        : null,
+    ],
+  ];
+  return (
+    <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && close()}>
+      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{detail?.lead.company}</DialogTitle>
+          <DialogDescription>
+            Perfil enriquecido, histórico comercial e dados de contato.
+          </DialogDescription>
+        </DialogHeader>
+        {detail && (
+          <div className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-4">
+              <DetailStat label="Qualidade" value={detail.lead.lead_quality} />
+              <DetailStat label="Digital" value={String(detail.lead.score)} />
+              <DetailStat
+                label="Perfil público"
+                value={String(detail.lead.profile_score)}
+              />
+              <DetailStat
+                label="Confiança"
+                value={String(detail.lead.data_confidence_score)}
+              />
+            </div>
+            <div className="grid gap-x-6 gap-y-3 rounded-xl border p-4 sm:grid-cols-2">
+              {fields.map(([label, value]) => (
+                <div key={String(label)}>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {label}
+                  </p>
+                  <p className="mt-1 break-words text-sm font-medium">
+                    {displayDetailValue(value)}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div>
+              <h3 className="font-semibold">Atendimento</h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {detail.case
+                  ? `${serviceTypeLabel(detail.case.service_type)} · ${crmStageLabel(detail.case.stage)}`
+                  : 'Este lead ainda não foi colocado em atendimento.'}
+              </p>
+            </div>
+            <div>
+              <h3 className="font-semibold">Últimas interações</h3>
+              <div className="mt-2 space-y-2">
+                {!detail.messages.length && (
+                  <p className="text-sm text-muted-foreground">
+                    Nenhuma mensagem registrada.
+                  </p>
+                )}
+                {detail.messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className="rounded-lg border p-3 text-sm"
+                  >
+                    <p className="font-medium">
+                      {message.subject || message.campaign}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {message.channel} · {contactStatus(message.status)} ·{' '}
+                      {new Date(message.updated_at).toLocaleString('pt-BR')}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>
+            Fechar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DetailStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-slate-50 p-3">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="mt-1 font-mono text-lg font-bold">{value}</p>
+    </div>
+  );
+}
+
+function displayDetailValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return 'Não informado';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  return JSON.stringify(value);
+}
+
+function QualityBadge({ quality }: { quality?: string | null }) {
+  return (
+    <Badge
+      className={
+        quality === 'A'
+          ? 'bg-emerald-100 text-emerald-700'
+          : 'bg-blue-100 text-blue-700'
+      }
+      variant="secondary"
+    >
+      Qualidade {quality || 'B'}
+    </Badge>
+  );
+}
+
+function serviceTypeLabel(value: CrmServiceType) {
+  return crmServiceTypes.find((item) => item.id === value)?.label ?? value;
+}
+
+function crmStageLabel(value: CrmStage) {
+  return crmStages.find((item) => item.id === value)?.label ?? value;
 }
 
 function Queue({
@@ -1573,9 +2278,7 @@ function Injector({
                       </p>
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {formatCount(
-                        snapshot.intelligence.core_processed_checks,
-                      )}
+                      {formatCount(snapshot.intelligence.core_processed_checks)}
                       /{formatCount(snapshot.intelligence.core_total_checks)}{' '}
                       consultas essenciais
                     </span>
