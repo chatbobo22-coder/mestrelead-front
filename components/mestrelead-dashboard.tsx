@@ -1834,10 +1834,10 @@ function Injector({
               />
             </Field>
           </div>
-          <Field label="CNAEs (separados por vírgula)">
+          <Field label="CNAEs (opcional — vazio inclui todos)">
             <Textarea
               value={draft.cnaes}
-              placeholder="6201501, 6202300"
+              placeholder="Todos os CNAEs"
               onChange={(event) =>
                 setDraft({ ...draft, cnaes: event.target.value })
               }
