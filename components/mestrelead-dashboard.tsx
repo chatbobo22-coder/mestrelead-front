@@ -415,6 +415,10 @@ type InjectorSnapshot = {
     downloaded_at?: string | null;
     processed_at?: string | null;
     error?: string | null;
+    downloaded_bytes?: number;
+    scanned_rows?: number;
+    skipped_rows?: number;
+    activity_at?: string | null;
   }[];
   storage: {
     database_bytes: number;
@@ -427,6 +431,7 @@ type InjectorSnapshot = {
     qualified: number;
     rejected: number;
     rejected_below_score: number;
+    rejected_pre_enrichment: number;
   };
   intelligence?: {
     profiles: number;
@@ -445,6 +450,25 @@ type InjectorSnapshot = {
       total: number;
     }[];
   };
+  enrichment?: {
+    id: number;
+    status: string;
+    started_at: string;
+    finished_at?: string | null;
+    processed: number;
+    done: number;
+    partial: number;
+    no_site: number;
+    failed: number;
+    activity_at: string;
+  } | null;
+  activity?: {
+    phase: string;
+    label: string;
+    current?: number | null;
+    total?: number | null;
+    updated_at?: string | null;
+  } | null;
   warning?: string;
 };
 
@@ -2839,6 +2863,41 @@ function Injector({
                 <ProgressBar value={snapshot.progress} />
               </div>
 
+              {snapshot.activity && (
+                <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span className="relative mt-1 flex size-2.5 shrink-0">
+                      <span className="absolute inline-flex size-full animate-ping rounded-full bg-violet-500 opacity-60" />
+                      <span className="relative inline-flex size-2.5 rounded-full bg-violet-600" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-violet-700">
+                        Atividade atual
+                      </p>
+                      <p className="mt-0.5 break-words text-sm font-semibold text-slate-950">
+                        {snapshot.activity.label}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-left sm:text-right">
+                    {!!snapshot.activity.total && (
+                      <p className="font-mono text-sm font-bold text-violet-800">
+                        {formatCount(snapshot.activity.current ?? 0)}/
+                        {formatCount(snapshot.activity.total)} ·{' '}
+                        {percentage(
+                          snapshot.activity.current,
+                          snapshot.activity.total,
+                        )}
+                        %
+                      </p>
+                    )}
+                    <p className="text-xs text-violet-700">
+                      {activityAge(snapshot.activity.updated_at)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                 <RuntimeMetric
                   label="Empresas armazenadas"
@@ -2853,7 +2912,7 @@ function Injector({
                 <RuntimeMetric
                   label="Leads enriquecidos"
                   value={formatCount(snapshot.counts.enriched)}
-                  detail={`${formatCount(snapshot.counts.qualified)} qualificados · ${formatCount(snapshot.counts.rejected)} descartados`}
+                  detail={`${formatCount(snapshot.counts.qualified)} qualificados · ${formatCount(snapshot.counts.rejected_pre_enrichment)} pré-filtrados · ${formatCount(snapshot.counts.rejected_below_score)} após análise`}
                 />
                 <RuntimeMetric
                   label="Consultas de inteligência"
@@ -2965,8 +3024,11 @@ function Injector({
                         <div className="min-w-0">
                           <p className="truncate font-medium">{file.name}</p>
                           <p className="text-muted-foreground">
-                            {formatCount(file.rows)} linhas
-                            {file.bytes ? ` · ${formatBytes(file.bytes)}` : ''}
+                            {file.status === 'downloading'
+                              ? `${formatBytes(file.downloaded_bytes ?? 0)} de ${formatBytes(file.bytes ?? 0)} baixados`
+                              : file.status === 'processing'
+                                ? `${formatCount(file.scanned_rows ?? 0)} lidas · ${formatCount(file.rows)} elegíveis · ${formatCount(file.skipped_rows ?? 0)} ignoradas`
+                                : `${formatCount(file.rows)} linhas${file.bytes ? ` · ${formatBytes(file.bytes)}` : ''}`}
                           </p>
                         </div>
                         <Badge variant="secondary">
@@ -3075,7 +3137,9 @@ function Injector({
                         <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                         <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
                       </span>
-                      Mais recente
+                      {snapshot.activity?.updated_at
+                        ? activityAge(snapshot.activity.updated_at, true)
+                        : 'Atualização ativa'}
                     </div>
                   </div>
                   <div
@@ -4558,7 +4622,11 @@ function runtimeLogClassName(line: string) {
   ) {
     return 'border-amber-400 bg-amber-400/10 text-amber-100';
   }
-  if (normalized.includes('[AGORA]') || normalized.includes('[IN_PROGRESS]')) {
+  if (
+    normalized.includes('[AGORA]') ||
+    normalized.includes('[ATIVIDADE]') ||
+    normalized.includes('[IN_PROGRESS]')
+  ) {
     return 'border-violet-400 bg-violet-400/10 text-violet-100';
   }
   if (
@@ -4572,6 +4640,7 @@ function runtimeLogClassName(line: string) {
     normalized.includes('[ETL]') ||
     normalized.includes('[BASE]') ||
     normalized.includes('[INTELIGÊNCIA]') ||
+    normalized.includes('[ENRIQUECIMENTO]') ||
     normalized.includes('[ARMAZENAMENTO]') ||
     normalized.includes('[ARQUIVO:')
   ) {
@@ -4617,6 +4686,24 @@ function formatTime(value?: string | null) {
     second: '2-digit',
     timeZone: 'America/Sao_Paulo',
   }).format(date);
+}
+
+function activityAge(value?: string | null, compact = false) {
+  if (!value)
+    return compact ? 'Aguardando sinal' : 'Aguardando a primeira atualização';
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return compact ? 'Atualização ativa' : value;
+  const seconds = Math.max(0, Math.floor((Date.now() - timestamp) / 1000));
+  if (seconds < 8) return compact ? 'Agora' : 'Atualizado agora';
+  if (seconds < 60)
+    return compact ? `${seconds}s atrás` : `Última atualização há ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60)
+    return compact
+      ? `${minutes}min atrás`
+      : `Última atualização há ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return compact ? `${hours}h atrás` : `Última atualização há ${hours} h`;
 }
 
 function contactStatus(status: string) {
