@@ -344,10 +344,20 @@ type InjectorConfig = {
   include_secondary_cnae: boolean;
   require_nome_fantasia: boolean;
   require_telefone: boolean;
+  require_email: boolean;
+  block_backoffice_email: boolean;
+  min_activity_months: number;
   min_population: number;
+  exclude_mei: boolean;
+  min_confidence_score: number;
+  min_lead_score: number;
+  load_batch_size: number;
   force_etl: boolean;
+  continuous: boolean;
   force_enrich: boolean;
   enrich_batch_size: number;
+  intelligence_sources: string;
+  intelligence_batch_size: number;
 };
 type InjectorRun = {
   id: number;
@@ -410,6 +420,8 @@ type InjectorSnapshot = {
     companies: number;
     enriched: number;
     qualified: number;
+    rejected: number;
+    rejected_below_score: number;
   };
   intelligence?: {
     profiles: number;
@@ -2828,7 +2840,7 @@ function Injector({
                 <RuntimeMetric
                   label="Leads enriquecidos"
                   value={formatCount(snapshot.counts.enriched)}
-                  detail={`${formatCount(snapshot.counts.qualified)} qualificados`}
+                  detail={`${formatCount(snapshot.counts.qualified)} qualificados · ${formatCount(snapshot.counts.rejected)} descartados`}
                 />
                 <RuntimeMetric
                   label="Consultas de inteligência"
@@ -3176,23 +3188,76 @@ function Injector({
         </SettingsCard>
         <div className="space-y-5">
           <SettingsCard title="Processamento">
-            <Field label="Lote de enriquecimento">
-              <Input
-                type="number"
-                min="1"
-                max="10000"
-                value={draft.enrich_batch_size}
-                onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    enrich_batch_size: Number(event.target.value),
-                  })
-                }
-              />
-            </Field>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Candidatos por ciclo">
+                <Input
+                  type="number"
+                  min="1000"
+                  max="50000"
+                  step="1000"
+                  value={draft.load_batch_size}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      load_batch_size: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="Score mínimo">
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={draft.min_lead_score}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      min_lead_score: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="Lote de enriquecimento">
+                <Input
+                  type="number"
+                  min="1"
+                  max="5000"
+                  value={draft.enrich_batch_size}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      enrich_batch_size: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+              <Field label="Lote de inteligência">
+                <Input
+                  type="number"
+                  min="1"
+                  max="1000"
+                  value={draft.intelligence_batch_size}
+                  onChange={(event) =>
+                    setDraft({
+                      ...draft,
+                      intelligence_batch_size: Number(event.target.value),
+                    })
+                  }
+                />
+              </Field>
+            </div>
+            <Toggle
+              label="Processamento contínuo"
+              description="Ao concluir um lote, inicia automaticamente o próximo até esgotar a fonte ou você abortar."
+              checked={draft.continuous}
+              onCheckedChange={(checked) =>
+                setDraft({ ...draft, continuous: checked })
+              }
+            />
             <Toggle
               label="Refazer extração"
-              description="Executa o ETL mesmo se a competência já existir."
+              description="Necessário para buscar o próximo lote da mesma competência."
               checked={draft.force_etl}
               onCheckedChange={(checked) =>
                 setDraft({ ...draft, force_etl: checked })
