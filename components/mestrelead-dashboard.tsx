@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
@@ -103,6 +103,7 @@ type Contact = {
   profile_score: number;
   data_confidence_score: number;
   qualification_reasons: string[];
+  contact_role?: string | null;
   status: string;
   last_subject?: string | null;
   opens: number;
@@ -165,6 +166,72 @@ type LeadDetail = {
     cnpj: string;
     trade_name?: string | null;
     source_payload?: Record<string, unknown>;
+    natureza_juridica_descricao?: string | null;
+    porte?: string | null;
+    identificador_matriz_filial?: string | null;
+    situacao_cadastral?: string | null;
+    data_inicio_atividade?: string | null;
+    cnae_fiscal_principal?: string | null;
+    cnae_principal_descricao?: string | null;
+    cnaes_fiscais_secundarios?: string | null;
+    tipo_logradouro?: string | null;
+    logradouro?: string | null;
+    numero?: string | null;
+    complemento?: string | null;
+    bairro?: string | null;
+    cep?: string | null;
+    uf?: string | null;
+    municipio_descricao?: string | null;
+    site_url?: string | null;
+    site_final_url?: string | null;
+    site_ativo?: boolean | null;
+    plataforma?: string | null;
+    instagram_url?: string | null;
+    linkedin_url?: string | null;
+    digital_score?: number | null;
+    digital_maturity?: string | null;
+    presence_score?: number | null;
+    commerce_score?: number | null;
+    fit_score?: number | null;
+    pain_score?: number | null;
+    presence_maturity?: string | null;
+    commerce_maturity?: string | null;
+    lead_classification?: string | null;
+    decisor_nome?: string | null;
+    decisor_qualificacao?: string | null;
+    faixa_faturamento_estimada?: string | null;
+    capital_social?: number | string | null;
+    opcao_mei?: string | null;
+    opcao_simples?: string | null;
+    qualification_status?: string | null;
+    qualification_reasons?: string[] | null;
+    rejection_reasons?: string[] | null;
+    contact_channel?: string | null;
+    contact_value?: string | null;
+    contact_confidence?: number | null;
+    qualification_version?: string | null;
+    qualified_at?: string | null;
+    last_qualified_at?: string | null;
+    profile_quality?: string | null;
+    capacity_score?: number | null;
+    intent_score?: number | null;
+    decision_makers_count?: number | null;
+    signals_count?: number | null;
+    sources_success?: string[] | null;
+    sources_pending?: string[] | null;
+    intelligence_summary?: string | null;
+    intelligence_reasons?: string[] | null;
+    intent_last_seen_at?: string | null;
+    commercial_temperature?: string | null;
+    last_commercial_event_at?: string | null;
+    feedback_events_count?: number | null;
+    deliverability_status?: string | null;
+    email_risk_score?: number | null;
+    mx_valid?: boolean | null;
+    email_disposable?: boolean | null;
+    email_reason_codes?: string[] | null;
+    group_key?: string | null;
+    group_primary?: boolean | null;
     created_at: string;
     updated_at: string;
   };
@@ -184,6 +251,47 @@ type LeadDetail = {
     to_stage?: string | null;
     note?: string | null;
     created_at: string;
+  }[];
+  people: {
+    id: number;
+    full_name: string;
+    role_title?: string | null;
+    relationship_type: string;
+    linkedin_url?: string | null;
+    business_email?: string | null;
+    business_phone?: string | null;
+    is_decision_maker: boolean;
+    confidence: number;
+    source_code: string;
+    source_url?: string | null;
+    priority_score: number;
+  }[];
+  signals: {
+    id: number;
+    source_code: string;
+    signal_type: string;
+    category: string;
+    title: string;
+    description?: string | null;
+    score: number;
+    confidence: number;
+    observed_at: string;
+    source_url?: string | null;
+  }[];
+  technologies: {
+    technology: string;
+    category: string;
+    confidence: number;
+    source_code: string;
+    source_url?: string | null;
+  }[];
+  sources: {
+    source_code: string;
+    display_name?: string | null;
+    status: string;
+    records_found: number;
+    last_checked_at?: string | null;
+    last_error?: string | null;
   }[];
 };
 type QueueItem = {
@@ -1525,75 +1633,390 @@ function LeadDetailDialog({
   detail: LeadDetail | null;
   close: () => void;
 }) {
-  const payload = detail?.lead.source_payload ?? {};
-  const fields: [string, unknown][] = [
-    ['CNPJ', detail?.lead.cnpj],
-    ['Razão social', detail?.lead.company_name],
-    ['Telefone', detail?.lead.phone],
-    ['WhatsApp', detail?.lead.whatsapp],
-    ['CNAE', payload.cnae_fiscal],
-    [
-      'Município/UF',
-      [payload.municipio, payload.uf].filter(Boolean).join(' / '),
-    ],
-    ['Porte', payload.porte_empresa],
-    [
-      'Capital social',
-      payload.capital_social
-        ? `R$ ${Number(payload.capital_social).toLocaleString('pt-BR')}`
-        : null,
-    ],
-  ];
+  const lead = detail?.lead;
+  const people = detail?.people ?? [];
+  const signals = detail?.signals ?? [];
+  const technologies = detail?.technologies ?? [];
+  const sources = detail?.sources ?? [];
+  const address = lead
+    ? [
+        lead.tipo_logradouro,
+        lead.logradouro,
+        lead.numero,
+        lead.complemento,
+        lead.bairro,
+        lead.cep && `CEP ${lead.cep}`,
+      ]
+        .filter(Boolean)
+        .join(', ')
+    : '';
   return (
     <Dialog open={Boolean(detail)} onOpenChange={(open) => !open && close()}>
-      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
-          <DialogTitle>{detail?.lead.company}</DialogTitle>
+          <DialogTitle>{lead?.company}</DialogTitle>
           <DialogDescription>
-            Perfil enriquecido, histórico comercial e dados de contato.
+            Perfil cadastral, inteligência comercial, decisores e histórico de
+            atendimento.
           </DialogDescription>
         </DialogHeader>
-        {detail && (
-          <div className="space-y-5">
-            <div className="grid gap-3 sm:grid-cols-4">
-              <DetailStat label="Qualidade" value={detail.lead.lead_quality} />
-              <DetailStat label="Digital" value={String(detail.lead.score)} />
+        {detail && lead && (
+          <div className="space-y-6">
+            <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
+              <DetailStat label="Qualidade" value={lead.lead_quality || '—'} />
+              <DetailStat
+                label="Score digital"
+                value={String(lead.score ?? 0)}
+              />
               <DetailStat
                 label="Perfil público"
-                value={String(detail.lead.profile_score)}
+                value={String(lead.profile_score ?? 0)}
               />
               <DetailStat
-                label="Confiança"
-                value={String(detail.lead.data_confidence_score)}
+                label="Confiança dos dados"
+                value={`${lead.data_confidence_score ?? 0}/10`}
+              />
+              <DetailStat
+                label="Intenção"
+                value={String(lead.intent_score ?? 0)}
+              />
+              <DetailStat
+                label="Capacidade"
+                value={String(lead.capacity_score ?? 0)}
               />
             </div>
-            <div className="grid gap-x-6 gap-y-3 rounded-xl border p-4 sm:grid-cols-2">
-              {fields.map(([label, value]) => (
-                <div key={String(label)}>
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {label}
-                  </p>
-                  <p className="mt-1 break-words text-sm font-medium">
-                    {displayDetailValue(value)}
-                  </p>
+            {lead.intelligence_summary && (
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                  Resumo comercial
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-700">
+                  {lead.intelligence_summary}
+                </p>
+              </div>
+            )}
+
+            <DetailSection title="Empresa e cadastro">
+              <DetailGrid
+                fields={[
+                  { label: 'CNPJ', value: formatCnpj(lead.cnpj) },
+                  { label: 'Razão social', value: lead.company_name },
+                  { label: 'Nome fantasia', value: lead.trade_name },
+                  {
+                    label: 'Situação',
+                    value:
+                      lead.situacao_cadastral === '02'
+                        ? 'Ativa'
+                        : lead.situacao_cadastral,
+                  },
+                  {
+                    label: 'Matriz/filial',
+                    value:
+                      lead.identificador_matriz_filial === '1'
+                        ? 'Matriz'
+                        : lead.identificador_matriz_filial === '2'
+                          ? 'Filial'
+                          : null,
+                  },
+                  {
+                    label: 'Início da atividade',
+                    value: formatDate(lead.data_inicio_atividade),
+                  },
+                  {
+                    label: 'Natureza jurídica',
+                    value: lead.natureza_juridica_descricao,
+                  },
+                  {
+                    label: 'Porte cadastral',
+                    value: companySizeLabel(lead.porte),
+                  },
+                  {
+                    label: 'Capital social',
+                    value: formatCurrency(lead.capital_social),
+                  },
+                  {
+                    label: 'Simples Nacional',
+                    value: yesNoCode(lead.opcao_simples),
+                  },
+                  { label: 'MEI', value: yesNoCode(lead.opcao_mei) },
+                  {
+                    label: 'Município/UF',
+                    value: [lead.municipio_descricao, lead.uf]
+                      .filter(Boolean)
+                      .join(' / '),
+                  },
+                  {
+                    label: 'CNAE principal',
+                    value: [
+                      lead.cnae_fiscal_principal,
+                      lead.cnae_principal_descricao,
+                    ]
+                      .filter(Boolean)
+                      .join(' — '),
+                  },
+                  { label: 'Endereço', value: address, wide: true },
+                ]}
+              />
+            </DetailSection>
+
+            <DetailSection title="Contato e presença digital">
+              <DetailGrid
+                fields={[
+                  {
+                    label: 'E-mail',
+                    value: lead.email,
+                    href: lead.email ? `mailto:${lead.email}` : undefined,
+                  },
+                  {
+                    label: 'Entregabilidade',
+                    value: deliverabilityLabel(
+                      lead.deliverability_status,
+                      lead.email_risk_score,
+                    ),
+                  },
+                  { label: 'Telefone', value: lead.phone },
+                  {
+                    label: 'WhatsApp',
+                    value: lead.whatsapp ? 'Abrir conversa' : null,
+                    href: lead.whatsapp || undefined,
+                  },
+                  {
+                    label: 'Site',
+                    value: lead.site_final_url || lead.site_url,
+                    href: lead.site_final_url || lead.site_url || undefined,
+                  },
+                  { label: 'Plataforma', value: lead.plataforma },
+                  {
+                    label: 'Instagram',
+                    value: lead.instagram_url ? 'Abrir perfil' : null,
+                    href: lead.instagram_url || undefined,
+                  },
+                  {
+                    label: 'LinkedIn',
+                    value: lead.linkedin_url ? 'Abrir perfil' : null,
+                    href: lead.linkedin_url || undefined,
+                  },
+                  { label: 'Canal recomendado', value: lead.contact_channel },
+                  { label: 'Função do contato', value: lead.contact_role },
+                  {
+                    label: 'Confiança do contato',
+                    value:
+                      lead.contact_confidence == null
+                        ? null
+                        : `${lead.contact_confidence}%`,
+                  },
+                  {
+                    label: 'Maturidade digital',
+                    value: lead.digital_maturity || lead.presence_maturity,
+                  },
+                ]}
+              />
+              <div className="mt-4 grid gap-3 sm:grid-cols-4">
+                <DetailStat
+                  label="Presença"
+                  value={String(lead.presence_score ?? 0)}
+                />
+                <DetailStat
+                  label="Comércio"
+                  value={String(lead.commerce_score ?? 0)}
+                />
+                <DetailStat label="Fit" value={String(lead.fit_score ?? 0)} />
+                <DetailStat
+                  label="Dor/oportunidade"
+                  value={String(lead.pain_score ?? 0)}
+                />
+              </div>
+            </DetailSection>
+
+            <DetailSection title="Qualificação e capacidade comercial">
+              <DetailGrid
+                fields={[
+                  { label: 'Classificação', value: lead.lead_classification },
+                  {
+                    label: 'Faixa estimada',
+                    value: lead.faixa_faturamento_estimada,
+                  },
+                  {
+                    label: 'Temperatura comercial',
+                    value: lead.commercial_temperature,
+                  },
+                  {
+                    label: 'Decisores encontrados',
+                    value: lead.decision_makers_count,
+                  },
+                  { label: 'Sinais encontrados', value: lead.signals_count },
+                  {
+                    label: 'Último sinal de intenção',
+                    value: formatDateTime(lead.intent_last_seen_at),
+                  },
+                  {
+                    label: 'Qualificado em',
+                    value: formatDateTime(lead.qualified_at),
+                  },
+                  {
+                    label: 'Última revisão',
+                    value: formatDateTime(lead.last_qualified_at),
+                  },
+                ]}
+              />
+              <TagList
+                title="Motivos da qualificação"
+                items={lead.qualification_reasons}
+              />
+              <TagList
+                title="Evidências do perfil"
+                items={lead.intelligence_reasons}
+              />
+            </DetailSection>
+
+            <DetailSection title={`Pessoas e decisores (${people.length})`}>
+              {!people.length ? (
+                <EmptyDetail text="Nenhuma pessoa pública encontrada para esta empresa." />
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {people.map((person) => (
+                    <div key={person.id} className="rounded-xl border p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">{person.full_name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {person.role_title ||
+                              relationshipLabel(person.relationship_type)}
+                          </p>
+                        </div>
+                        {person.is_decision_maker && (
+                          <Badge className="bg-emerald-100 text-emerald-700">
+                            Decisor
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Prioridade {person.priority_score} · confiança{' '}
+                        {person.confidence}% ·{' '}
+                        {intelligenceSourceLabel(person.source_code)}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-3 text-sm">
+                        {person.business_email && (
+                          <a
+                            className="text-indigo-600 hover:underline"
+                            href={`mailto:${person.business_email}`}
+                          >
+                            {person.business_email}
+                          </a>
+                        )}
+                        {person.business_phone && (
+                          <span>{person.business_phone}</span>
+                        )}
+                        {person.linkedin_url && (
+                          <a
+                            className="text-indigo-600 hover:underline"
+                            href={person.linkedin_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            LinkedIn
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div>
-              <h3 className="font-semibold">Atendimento</h3>
-              <p className="mt-2 text-sm text-muted-foreground">
+              )}
+            </DetailSection>
+
+            <DetailSection title={`Sinais de inteligência (${signals.length})`}>
+              {!signals.length ? (
+                <EmptyDetail text="Nenhum sinal comercial público registrado." />
+              ) : (
+                <div className="space-y-2">
+                  {signals.map((signal) => (
+                    <div
+                      key={signal.id}
+                      className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-start sm:justify-between"
+                    >
+                      <div>
+                        <p className="font-medium">{signal.title}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {signal.description ||
+                            `${signal.signal_type} · ${intelligenceSourceLabel(signal.source_code)}`}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <Badge variant="secondary">{signal.category}</Badge>
+                        <Badge
+                          className={
+                            signal.score > 0
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : signal.score < 0
+                                ? 'bg-rose-100 text-rose-700'
+                                : ''
+                          }
+                          variant="secondary"
+                        >
+                          {signal.score > 0 ? '+' : ''}
+                          {signal.score}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DetailSection>
+
+            <DetailSection title="Tecnologias identificadas">
+              {!technologies.length ? (
+                <EmptyDetail text="Nenhuma tecnologia identificada." />
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {technologies.map((item) => (
+                    <Badge
+                      key={`${item.technology}-${item.source_code}`}
+                      variant="secondary"
+                    >
+                      {item.technology} · {item.confidence}%
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </DetailSection>
+
+            <DetailSection title="Cobertura das fontes">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {sources.map((source) => (
+                  <div
+                    key={source.source_code}
+                    className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
+                  >
+                    <span>
+                      {source.display_name ||
+                        intelligenceSourceLabel(source.source_code)}
+                    </span>
+                    <Badge
+                      className={
+                        source.status === 'success'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : source.status === 'failed'
+                            ? 'bg-rose-100 text-rose-700'
+                            : ''
+                      }
+                      variant="secondary"
+                    >
+                      {sourceStatusLabel(source.status)}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </DetailSection>
+
+            <DetailSection title="Atendimento e histórico">
+              <p className="text-sm text-muted-foreground">
                 {detail.case
                   ? `${serviceTypeLabel(detail.case.service_type)} · ${crmStageLabel(detail.case.stage)}`
                   : 'Este lead ainda não foi colocado em atendimento.'}
               </p>
-            </div>
-            <div>
-              <h3 className="font-semibold">Últimas interações</h3>
-              <div className="mt-2 space-y-2">
+              <div className="mt-4 space-y-2">
                 {!detail.messages.length && (
-                  <p className="text-sm text-muted-foreground">
-                    Nenhuma mensagem registrada.
-                  </p>
+                  <EmptyDetail text="Nenhuma mensagem registrada." />
                 )}
                 {detail.messages.map((message) => (
                   <div
@@ -1605,12 +2028,12 @@ function LeadDetailDialog({
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {message.channel} · {contactStatus(message.status)} ·{' '}
-                      {new Date(message.updated_at).toLocaleString('pt-BR')}
+                      {formatDateTime(message.updated_at)}
                     </p>
                   </div>
                 ))}
               </div>
-            </div>
+            </DetailSection>
           </div>
         )}
         <DialogFooter>
@@ -1620,6 +2043,83 @@ function LeadDetailDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function DetailSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <h3 className="mb-3 text-base font-semibold">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+type DetailField = {
+  label: string;
+  value: unknown;
+  href?: string;
+  wide?: boolean;
+};
+
+function DetailGrid({ fields }: { fields: DetailField[] }) {
+  return (
+    <div className="grid gap-x-6 gap-y-4 rounded-xl border p-4 sm:grid-cols-2 lg:grid-cols-3">
+      {fields.map((field) => (
+        <div
+          key={field.label}
+          className={field.wide ? 'sm:col-span-2 lg:col-span-3' : ''}
+        >
+          <p className="text-xs font-medium text-muted-foreground">
+            {field.label}
+          </p>
+          {field.href && field.value ? (
+            <a
+              className="mt-1 block break-words text-sm font-medium text-indigo-600 hover:underline"
+              href={field.href}
+              target={field.href.startsWith('http') ? '_blank' : undefined}
+              rel={field.href.startsWith('http') ? 'noreferrer' : undefined}
+            >
+              {displayDetailValue(field.value)}
+            </a>
+          ) : (
+            <p className="mt-1 break-words text-sm font-medium">
+              {displayDetailValue(field.value)}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TagList({ title, items }: { title: string; items?: string[] | null }) {
+  if (!items?.length) return null;
+  return (
+    <div className="mt-4">
+      <p className="mb-2 text-xs font-medium text-muted-foreground">{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => (
+          <Badge key={item} variant="secondary">
+            {humanizeCode(item)}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function EmptyDetail({ text }: { text: string }) {
+  return (
+    <p className="rounded-lg bg-slate-50 p-3 text-sm text-muted-foreground">
+      {text}
+    </p>
   );
 }
 
@@ -1633,9 +2133,93 @@ function DetailStat({ label, value }: { label: string; value: string }) {
 }
 
 function displayDetailValue(value: unknown) {
-  if (value === null || value === undefined || value === '') return 'Não informado';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (value === null || value === undefined || value === '')
+    return 'Não informado';
+  if (typeof value === 'string' || typeof value === 'number')
+    return String(value);
   return JSON.stringify(value);
+}
+
+function formatCnpj(value?: string | null) {
+  const digits = (value || '').replace(/\D/g, '');
+  if (digits.length !== 14) return value || 'Não informado';
+  return digits.replace(
+    /^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/,
+    '$1.$2.$3/$4-$5',
+  );
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return null;
+  const parsed = new Date(`${value.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : parsed.toLocaleDateString('pt-BR');
+}
+
+function formatCurrency(value?: number | string | null) {
+  if (value === null || value === undefined || value === '') return null;
+  return Number(value).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  });
+}
+
+function companySizeLabel(value?: string | null) {
+  const labels: Record<string, string> = {
+    '00': 'Não informado',
+    '01': 'Microempresa',
+    '03': 'Empresa de pequeno porte',
+    '05': 'Demais portes',
+  };
+  return labels[value || ''] || value;
+}
+
+function yesNoCode(value?: string | null) {
+  if (value === 'S') return 'Sim';
+  if (value === 'N') return 'Não';
+  return null;
+}
+
+function deliverabilityLabel(status?: string | null, risk?: number | null) {
+  if (!status) return null;
+  const labels: Record<string, string> = {
+    valid: 'Válido',
+    risky: 'Com risco',
+    invalid: 'Inválido',
+    unknown: 'Não confirmado',
+  };
+  return `${labels[status] || status}${risk == null ? '' : ` · risco ${risk}`}`;
+}
+
+function relationshipLabel(value: string) {
+  const labels: Record<string, string> = {
+    partner: 'Sócio',
+    administrator: 'Administrador',
+    founder: 'Fundador',
+    executive: 'Executivo',
+    employee: 'Colaborador',
+    contact: 'Contato',
+  };
+  return labels[value] || humanizeCode(value);
+}
+
+function sourceStatusLabel(value: string) {
+  const labels: Record<string, string> = {
+    pending: 'Pendente',
+    running: 'Consultando',
+    success: 'Concluída',
+    no_data: 'Sem dados',
+    failed: 'Falhou',
+    skipped: 'Adiada',
+  };
+  return labels[value] || humanizeCode(value);
+}
+
+function humanizeCode(value: string) {
+  return value
+    .replaceAll('_', ' ')
+    .replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function QualityBadge({ quality }: { quality?: string | null }) {
