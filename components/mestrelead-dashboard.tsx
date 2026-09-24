@@ -16,6 +16,8 @@ import {
   Gauge,
   Mail,
   MoreHorizontal,
+  Sparkles,
+  Flame,
   Pause,
   Play,
   Plus,
@@ -50,6 +52,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { IntentEngine } from '@/components/intent-engine';
 
 type View =
   | 'overview'
@@ -57,6 +60,8 @@ type View =
   | 'templates'
   | 'contacts'
   | 'crm'
+  | 'smart-search'
+  | 'commercial-priority'
   | 'queue'
   | 'reports'
   | 'injector'
@@ -449,6 +454,8 @@ const nav: { id: View; label: string; icon: typeof Gauge }[] = [
   { id: 'templates', label: 'Modelos', icon: FileText },
   { id: 'contacts', label: 'Contatos', icon: Users },
   { id: 'crm', label: 'CRM', icon: Columns3 },
+  { id: 'smart-search', label: 'Busca Inteligente', icon: Sparkles },
+  { id: 'commercial-priority', label: 'Prioridade Comercial', icon: Flame },
   { id: 'queue', label: 'Fila de envio', icon: Activity },
   { id: 'reports', label: 'Relatórios', icon: BarChart3 },
   { id: 'injector', label: 'Injector', icon: Database },
@@ -697,6 +704,12 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
             ))}
           {view === 'contacts' && <Contacts />}
           {view === 'crm' && <Crm setNotice={setNotice} />}
+          {view === 'smart-search' && (
+            <IntentEngine mode="search" setNotice={setNotice} />
+          )}
+          {view === 'commercial-priority' && (
+            <IntentEngine mode="priority" setNotice={setNotice} />
+          )}
           {view === 'queue' && (
             <Queue
               paused={paused}
