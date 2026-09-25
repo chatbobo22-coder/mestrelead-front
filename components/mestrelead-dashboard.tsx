@@ -320,6 +320,8 @@ type QueueItem = {
   provider?: string | null;
   last_error?: string | null;
   score: number;
+  confidence_score: number;
+  contact_role: string;
   lead_quality: string;
 };
 type QueueCampaign = {
@@ -2540,6 +2542,7 @@ function Queue({
       });
       const campaignData = (await response.json().catch(() => ({}))) as {
         campaign?: Campaign;
+        queued?: number;
         detail?: string;
         error?: string;
       };
@@ -2547,22 +2550,9 @@ function Queue({
         throw new Error(
           campaignData.detail || campaignData.error || 'Falha ao criar campanha',
         );
-      const launch = await fetch(
-        `/api/campaigns/${campaignData.campaign.id}/launch`,
-        { method: 'POST' },
-      );
-      const launchData = (await launch.json().catch(() => ({}))) as {
-        queued?: number;
-        detail?: string;
-        error?: string;
-      };
-      if (!launch.ok)
-        throw new Error(
-          launchData.detail || launchData.error || 'Falha ao preparar campanha',
-        );
       await refresh();
       setNotice(
-        `${Number(launchData.queued ?? 0).toLocaleString('pt-BR')} mensagens enfileiradas em ${campaignName}.`,
+        `${Number(campaignData.queued ?? 0).toLocaleString('pt-BR')} mensagens enfileiradas em ${campaignName}.`,
       );
       if (!settings?.dry_run && !scheduledAt) {
         setPaused(false);
@@ -3066,7 +3056,7 @@ function Queue({
               <CardTitle className="font-bold">Mensagens por destinatário</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
                 {settings
-                  ? `Próximo envio respeita intervalo de ${Math.round(settings.send_interval_seconds / 60)} minutos.`
+                  ? `Prioridade: A primeiro; depois score, confiança e contato comercial. Limite de ${settings.hourly_limit}/hora, com intervalo de ${Math.round(settings.send_interval_seconds / 60)} minutos.`
                   : 'Aguardando configuração do outreach.'}
               </p>
             </div>
@@ -3103,7 +3093,7 @@ function Queue({
                 <p className="truncate text-sm font-medium">{item.subject}</p>
                 <p className="text-xs text-muted-foreground">
                   {item.campaign} · qualidade {item.lead_quality} · score{' '}
-                  {item.score}
+                  {item.score} · confiança {item.confidence_score}
                 </p>
               </div>
               <Badge

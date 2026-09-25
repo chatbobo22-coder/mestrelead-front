@@ -76,12 +76,15 @@ export async function POST(request: Request) {
             ? null
             : Number(input.maxScore),
         scheduled_at: input.scheduledAt || null,
+        launch: true,
       }),
     });
     if (!response.ok) return proxyJson(response);
     const data = (await response.json()) as {
       id: number;
       audience?: { total?: number };
+      status?: string;
+      queued?: number;
     };
     return NextResponse.json(
       {
@@ -90,9 +93,10 @@ export async function POST(request: Request) {
           name: input.name,
           subject: input.subject,
           audience: `${Number(data.audience?.total ?? 0)} contatos`,
-          status: 'draft',
+          status: data.status ?? 'active',
           daily_limit: Number(input.dailyLimit || 400),
         },
+        queued: Number(data.queued ?? 0),
       },
       { status: 201 },
     );
