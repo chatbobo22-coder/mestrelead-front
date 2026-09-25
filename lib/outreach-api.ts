@@ -7,7 +7,13 @@ export function outreachBaseUrl() {
   );
 }
 
-export async function outreachRequest(path: string, init: RequestInit = {}) {
+type OutreachRequestInit = RequestInit & { timeoutMs?: number };
+
+export async function outreachRequest(
+  path: string,
+  init: OutreachRequestInit = {},
+) {
+  const { timeoutMs = 20000, ...fetchInit } = init;
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
   if (init.body) headers.set('Content-Type', 'application/json');
@@ -16,10 +22,10 @@ export async function outreachRequest(path: string, init: RequestInit = {}) {
   }
 
   return fetch(`${outreachBaseUrl()}${path}`, {
-    ...init,
+    ...fetchInit,
     headers,
     cache: 'no-store',
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 }
 

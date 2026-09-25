@@ -2389,60 +2389,37 @@ function Queue({
   const activeCampaignTemplateId =
     campaignTemplateId || (templates[0] ? String(templates[0].id) : '');
 
-  useEffect(() => {
-    if (!dispatchingCampaignId || paused || settings?.dry_run) return;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const processNext = async () => {
-      try {
-        const response = await fetch(
-          `/api/campaigns/${dispatchingCampaignId}/send-next`,
-          { method: 'POST' },
-        );
-        const data = (await response.json().catch(() => ({}))) as {
-          processed?: boolean;
-          status?: string | null;
-          detail?: string;
-          error?: string;
-        };
-        if (!response.ok)
-          throw new Error(data.detail || data.error || 'Falha no envio');
-        await refresh();
-        if (!data.processed || data.status === 'failed') {
-          setDispatchingCampaignId(null);
-          setNotice(
-            data.status === 'failed'
-              ? 'Execução interrompida após falha. Consulte o log.'
-              : 'Nenhuma mensagem elegível agora. Limites ou agendamento podem estar ativos.',
-          );
-          return;
-        }
-        if (!stopped) {
-          timer = setTimeout(
-            processNext,
-            Math.max(5, settings?.send_interval_seconds ?? 60) * 1000,
-          );
-        }
-      } catch (error) {
-        setDispatchingCampaignId(null);
-        setNotice(
-          error instanceof Error ? error.message : 'Falha ao processar envio.',
-        );
-      }
-    };
-    void processNext();
-    return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [
-    dispatchingCampaignId,
-    paused,
-    refresh,
-    setNotice,
-    settings?.dry_run,
-    settings?.send_interval_seconds,
-  ]);
+  async function dispatchCampaignBatch(campaignId: number) {
+    setPaused(false);
+    setDispatchingCampaignId(campaignId);
+    try {
+      const response = await fetch(`/api/campaigns/${campaignId}/send-next`, {
+        method: 'POST',
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        processed?: number;
+        sent?: number;
+        failed?: number;
+        remaining_daily?: number;
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(data.detail || data.error || 'Falha no lote de envios');
+      setNotice(
+        data.processed
+          ? `Lote concluído: ${data.sent ?? 0} enviado(s), ${data.failed ?? 0} falha(s).`
+          : 'Nenhuma mensagem elegível agora; o limite de 50 por hora pode já ter sido atingido.',
+      );
+      await refresh();
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Falha ao processar o lote.',
+      );
+    } finally {
+      setDispatchingCampaignId(null);
+    }
+  }
 
   const audiencePayload = {
     audience_mode: audienceMode,
@@ -3031,15 +3008,12 @@ function Queue({
                       disabled={
                         settings?.dry_run || dispatchingCampaignId === campaign.id
                       }
-                      onClick={() => {
-                        setPaused(false);
-                        setDispatchingCampaignId(campaign.id);
-                      }}
+                      onClick={() => void dispatchCampaignBatch(campaign.id)}
                     >
                       <Send />
                       {dispatchingCampaignId === campaign.id
                         ? 'Enviando…'
-                        : 'Enviar agora'}
+                        : 'Enviar lote agora'}
                     </Button>
                   )}
                 </div>
