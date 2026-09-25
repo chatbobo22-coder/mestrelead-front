@@ -2363,7 +2363,7 @@ function Queue({
   const [qualityB, setQualityB] = useState(false);
   const [minScore, setMinScore] = useState('70');
   const [maxScore, setMaxScore] = useState('100');
-  const [dailyLimit, setDailyLimit] = useState('30');
+  const [dailyLimit, setDailyLimit] = useState('400');
   const [scheduledAt, setScheduledAt] = useState('');
   const [audienceEstimate, setAudienceEstimate] = useState<{
     total: number;
@@ -5114,7 +5114,7 @@ function CampaignDialog({
                 <Input name="scheduledAt" type="datetime-local" />
               </Field>
               <Field label="Limite diário">
-                <Input name="dailyLimit" type="number" defaultValue="30" />
+                <Input name="dailyLimit" type="number" defaultValue="400" />
               </Field>
             </div>
           </div>
