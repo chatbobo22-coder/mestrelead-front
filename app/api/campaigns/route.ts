@@ -65,17 +65,31 @@ export async function POST(request: Request) {
         body_html_template: input.htmlBody,
         template_id: input.templateId ? Number(input.templateId) : null,
         daily_limit: Number(input.dailyLimit || 30),
+        audience_mode: input.audienceMode || 'all',
+        audience_qualities: input.audienceQualities || ['A', 'B'],
+        min_score:
+          input.minScore === '' || input.minScore == null
+            ? null
+            : Number(input.minScore),
+        max_score:
+          input.maxScore === '' || input.maxScore == null
+            ? null
+            : Number(input.maxScore),
+        scheduled_at: input.scheduledAt || null,
       }),
     });
     if (!response.ok) return proxyJson(response);
-    const data = (await response.json()) as { id: number };
+    const data = (await response.json()) as {
+      id: number;
+      audience?: { total?: number };
+    };
     return NextResponse.json(
       {
         campaign: {
           id: data.id,
           name: input.name,
           subject: input.subject,
-          audience: input.audience,
+          audience: `${Number(data.audience?.total ?? 0)} contatos`,
           status: 'draft',
           daily_limit: Number(input.dailyLimit || 30),
         },

@@ -1,11 +1,17 @@
 'use client';
 
-import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react';
+import {
+  FormEvent,
+  ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import {
   Activity,
   ArrowLeft,
   BarChart3,
-  CalendarClock,
   CheckCircle2,
   ChevronRight,
   Clock3,
@@ -301,12 +307,40 @@ type LeadDetail = {
 };
 type QueueItem = {
   id: number;
+  campaign_id: number;
   company: string;
   campaign: string;
+  campaign_status: string;
+  template_name?: string | null;
   destination: string;
   subject?: string | null;
   scheduled_at?: string | null;
+  sent_at?: string | null;
   status: string;
+  provider?: string | null;
+  last_error?: string | null;
+  score: number;
+  lead_quality: string;
+};
+type QueueCampaign = {
+  id: number;
+  name: string;
+  status: string;
+  template_name?: string | null;
+  audience_mode: 'all' | 'quality' | 'score';
+  audience_qualities: string[];
+  min_score?: number | null;
+  max_score?: number | null;
+  daily_limit: number;
+  scheduled_start_at?: string | null;
+  launched_at?: string | null;
+  total: number;
+  queued: number;
+  sending: number;
+  sent: number;
+  delivered: number;
+  failed: number;
+  replied: number;
 };
 type QueueLog = {
   id: number;
@@ -321,6 +355,7 @@ type QueueSnapshot = {
     accepted_today: number;
     failed_today: number;
   };
+  campaigns: QueueCampaign[];
   items: QueueItem[];
   logs: QueueLog[];
 };
@@ -493,6 +528,7 @@ const emptyQueue: QueueSnapshot = {
     accepted_today: 0,
     failed_today: 0,
   },
+  campaigns: [],
   items: [],
   logs: [],
 };
@@ -530,7 +566,7 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
   const [paused, setPaused] = useState(false);
   const [notice, setNotice] = useState('');
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const results = await Promise.allSettled([
       fetchJson<{ templates: Template[] }>('/api/templates'),
       fetchJson<{ campaigns: Campaign[] }>('/api/campaigns'),
@@ -562,13 +598,13 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
     apply<{ runs: InjectorRun[] }>(5, (data) => setInjectorRuns(data.runs));
     setDataError([...new Set(errors)].join(' • '));
     setLoading(false);
-  }
+  }, []);
 
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 15000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
     const context =
@@ -741,6 +777,8 @@ export function MestreLeadDashboard({ userName }: { userName: string }) {
               setNotice={setNotice}
               snapshot={queue}
               settings={settings}
+              templates={templates}
+              refresh={refresh}
             />
           )}
           {view === 'reports' && <Reports campaigns={campaigns} />}
@@ -2301,15 +2339,244 @@ function Queue({
   setNotice,
   snapshot,
   settings,
+  templates,
+  refresh,
 }: {
   paused: boolean;
   setPaused: (paused: boolean) => void;
   setNotice: (notice: string) => void;
   snapshot: QueueSnapshot;
   settings: OperationalSettings | null;
+  templates: Template[];
+  refresh: () => Promise<void>;
 }) {
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const running = snapshot.items.some((item) => item.status === 'sending');
+  const [testEmail, setTestEmail] = useState('');
+  const [testCompany, setTestCompany] = useState('Empresa de teste');
+  const [testTemplateId, setTestTemplateId] = useState('');
+  const [testSending, setTestSending] = useState(false);
+  const [campaignName, setCampaignName] = useState('');
+  const [campaignTemplateId, setCampaignTemplateId] = useState('');
+  const [audienceMode, setAudienceMode] = useState<
+    'all' | 'quality' | 'score'
+  >('quality');
+  const [qualityA, setQualityA] = useState(true);
+  const [qualityB, setQualityB] = useState(false);
+  const [minScore, setMinScore] = useState('70');
+  const [maxScore, setMaxScore] = useState('100');
+  const [dailyLimit, setDailyLimit] = useState('30');
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [audienceEstimate, setAudienceEstimate] = useState<{
+    total: number;
+    quality_a: number;
+    quality_b: number;
+    min_score: number;
+    max_score: number;
+  } | null>(null);
+  const [audienceLoading, setAudienceLoading] = useState(false);
+  const [campaignStarting, setCampaignStarting] = useState(false);
+  const [dispatchingCampaignId, setDispatchingCampaignId] = useState<
+    number | null
+  >(null);
+  const running =
+    dispatchingCampaignId !== null ||
+    snapshot.items.some((item) => item.status === 'sending');
+  const queueCampaigns = snapshot.campaigns ?? [];
+
+  const activeTestTemplateId =
+    testTemplateId || (templates[0] ? String(templates[0].id) : '');
+  const activeCampaignTemplateId =
+    campaignTemplateId || (templates[0] ? String(templates[0].id) : '');
+
+  useEffect(() => {
+    if (!dispatchingCampaignId || paused || settings?.dry_run) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const processNext = async () => {
+      try {
+        const response = await fetch(
+          `/api/campaigns/${dispatchingCampaignId}/send-next`,
+          { method: 'POST' },
+        );
+        const data = (await response.json().catch(() => ({}))) as {
+          processed?: boolean;
+          status?: string | null;
+          detail?: string;
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(data.detail || data.error || 'Falha no envio');
+        await refresh();
+        if (!data.processed || data.status === 'failed') {
+          setDispatchingCampaignId(null);
+          setNotice(
+            data.status === 'failed'
+              ? 'Execução interrompida após falha. Consulte o log.'
+              : 'Nenhuma mensagem elegível agora. Limites ou agendamento podem estar ativos.',
+          );
+          return;
+        }
+        if (!stopped) {
+          timer = setTimeout(
+            processNext,
+            Math.max(5, settings?.send_interval_seconds ?? 60) * 1000,
+          );
+        }
+      } catch (error) {
+        setDispatchingCampaignId(null);
+        setNotice(
+          error instanceof Error ? error.message : 'Falha ao processar envio.',
+        );
+      }
+    };
+    void processNext();
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [
+    dispatchingCampaignId,
+    paused,
+    refresh,
+    setNotice,
+    settings?.dry_run,
+    settings?.send_interval_seconds,
+  ]);
+
+  const audiencePayload = {
+    audience_mode: audienceMode,
+    audience_qualities: [
+      ...(qualityA ? ['A'] : []),
+      ...(qualityB ? ['B'] : []),
+    ],
+    min_score: audienceMode === 'score' ? Number(minScore || 0) : null,
+    max_score: audienceMode === 'score' ? Number(maxScore || 100) : null,
+  };
+
+  async function estimateAudience() {
+    if (audienceMode === 'quality' && !qualityA && !qualityB) {
+      setNotice('Selecione pelo menos a qualidade A ou B.');
+      return null;
+    }
+    setAudienceLoading(true);
+    try {
+      const response = await fetch('/api/audience/estimate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(audiencePayload),
+      });
+      const data = (await response.json()) as {
+        audience?: typeof audienceEstimate;
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(data.detail || data.error || 'Falha ao calcular público');
+      setAudienceEstimate(data.audience ?? null);
+      return data.audience ?? null;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Falha ao calcular público.');
+      return null;
+    } finally {
+      setAudienceLoading(false);
+    }
+  }
+
+  async function sendTest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setTestSending(true);
+    try {
+      const response = await fetch('/api/test-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: testEmail,
+          companyName: testCompany,
+          templateId: activeTestTemplateId,
+        }),
+      });
+      const data = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(data.detail || data.error || 'Falha no teste');
+      setNotice(`E-mail de teste enviado para ${testEmail}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Falha no teste.');
+    } finally {
+      setTestSending(false);
+    }
+  }
+
+  async function createAndLaunchCampaign(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const estimate = audienceEstimate ?? (await estimateAudience());
+    if (!estimate?.total) {
+      setNotice('Nenhum contato corresponde aos filtros escolhidos.');
+      return;
+    }
+    const template = templates.find(
+      (item) => item.id === Number(activeCampaignTemplateId),
+    );
+    if (!template) return;
+    setCampaignStarting(true);
+    try {
+      const response = await fetch('/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: campaignName,
+          templateId: activeCampaignTemplateId,
+          subject: template.subject,
+          textBody: template.text_body,
+          htmlBody: template.html_body,
+          dailyLimit,
+          scheduledAt: scheduledAt ? new Date(scheduledAt).toISOString() : '',
+          audienceMode,
+          audienceQualities: audiencePayload.audience_qualities,
+          minScore: audiencePayload.min_score,
+          maxScore: audiencePayload.max_score,
+        }),
+      });
+      const campaignData = (await response.json().catch(() => ({}))) as {
+        campaign?: Campaign;
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok || !campaignData.campaign)
+        throw new Error(
+          campaignData.detail || campaignData.error || 'Falha ao criar campanha',
+        );
+      const launch = await fetch(
+        `/api/campaigns/${campaignData.campaign.id}/launch`,
+        { method: 'POST' },
+      );
+      const launchData = (await launch.json().catch(() => ({}))) as {
+        queued?: number;
+        detail?: string;
+        error?: string;
+      };
+      if (!launch.ok)
+        throw new Error(
+          launchData.detail || launchData.error || 'Falha ao preparar campanha',
+        );
+      await refresh();
+      setNotice(
+        `${Number(launchData.queued ?? 0).toLocaleString('pt-BR')} mensagens enfileiradas em ${campaignName}.`,
+      );
+      if (!settings?.dry_run && !scheduledAt) {
+        setPaused(false);
+        setDispatchingCampaignId(campaignData.campaign.id);
+      }
+      setCampaignName('');
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Falha ao iniciar campanha.',
+      );
+    } finally {
+      setCampaignStarting(false);
+    }
+  }
   const processed = Number(snapshot.metrics.processed_today || 0);
   const success = Number(snapshot.metrics.accepted_today || 0);
   const failed = Number(snapshot.metrics.failed_today || 0);
@@ -2344,12 +2611,8 @@ function Queue({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setScheduleOpen(true)}
-            disabled={!snapshot.items.length}
-          >
-            <CalendarClock /> Agendar envio
+          <Button variant="outline" onClick={() => void refresh()}>
+            <Activity /> Atualizar
           </Button>
           {running ? (
             <>
@@ -2360,9 +2623,9 @@ function Queue({
               <Button
                 variant="destructive"
                 onClick={() => {
-                  setNotice(
-                    'Pausa solicitada apenas na interface. O worker precisa expor o controle remoto para interromper a execução.',
-                  );
+                  setDispatchingCampaignId(null);
+                  setPaused(true);
+                  setNotice('Execução desta tela interrompida. A fila foi preservada.');
                 }}
               >
                 <Square /> Interromper
@@ -2371,9 +2634,21 @@ function Queue({
           ) : (
             <Button
               onClick={() => {
-                setNotice(
-                  'O envio manual precisa ser iniciado pelo worker do outreach; nenhuma simulação foi executada.',
+                const campaign = queueCampaigns.find(
+                  (item) => item.status === 'active' && item.queued > 0,
                 );
+                if (!campaign) {
+                  setNotice('Nenhuma campanha ativa possui mensagens na fila.');
+                  return;
+                }
+                if (settings?.dry_run) {
+                  setNotice(
+                    'Envio real bloqueado: desative DRY_RUN no backend antes de iniciar.',
+                  );
+                  return;
+                }
+                setPaused(false);
+                setDispatchingCampaignId(campaign.id);
               }}
               disabled={!snapshot.items.length}
             >
@@ -2382,6 +2657,257 @@ function Queue({
           )}
         </div>
       </div>
+
+      {settings?.dry_run && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>Modo seguro ativo.</strong> Testes individuais podem ser
+          enviados, mas campanhas reais permanecem bloqueadas enquanto
+          <code className="mx-1 rounded bg-amber-100 px-1.5 py-0.5">
+            DRY_RUN=true
+          </code>
+          no backend.
+        </div>
+      )}
+
+      <section className="grid gap-5 xl:grid-cols-[0.85fr_1.4fr]">
+        <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+          <CardHeader className="border-b">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Mail className="size-5 text-indigo-600" /> Testar um modelo
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Envie somente para o endereço informado antes de criar uma
+              campanha.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <form className="grid gap-4" onSubmit={sendTest}>
+              <Field label="Modelo">
+                <select
+                  value={activeTestTemplateId}
+                  onChange={(event) => setTestTemplateId(event.target.value)}
+                  className="h-10 w-full rounded-lg border bg-white px-3"
+                  required
+                >
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Enviar teste para">
+                <Input
+                  type="email"
+                  value={testEmail}
+                  onChange={(event) => setTestEmail(event.target.value)}
+                  placeholder="seuemail@empresa.com.br"
+                  required
+                />
+              </Field>
+              <Field label="Empresa usada na personalização">
+                <Input
+                  value={testCompany}
+                  onChange={(event) => setTestCompany(event.target.value)}
+                  required
+                />
+              </Field>
+              <Button type="submit" disabled={testSending || !templates.length}>
+                <Send /> {testSending ? 'Enviando teste…' : 'Enviar e-mail de teste'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+          <CardHeader className="border-b">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Users className="size-5 text-indigo-600" /> Configurar público e
+              iniciar campanha
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Escolha o modelo e selecione todos, qualidade A/B ou uma faixa de
+              score.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <form className="grid gap-4" onSubmit={createAndLaunchCampaign}>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Nome da campanha">
+                  <Input
+                    value={campaignName}
+                    onChange={(event) => setCampaignName(event.target.value)}
+                    placeholder="Ex.: História da planilha — leads A"
+                    required
+                  />
+                </Field>
+                <Field label="Modelo">
+                  <select
+                    value={activeCampaignTemplateId}
+                    onChange={(event) =>
+                      setCampaignTemplateId(event.target.value)
+                    }
+                    className="h-10 w-full rounded-lg border bg-white px-3"
+                    required
+                  >
+                    {templates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Selecionar contatos">
+                <select
+                  value={audienceMode}
+                  onChange={(event) => {
+                    setAudienceMode(
+                      event.target.value as 'all' | 'quality' | 'score',
+                    );
+                    setAudienceEstimate(null);
+                  }}
+                  className="h-10 w-full rounded-lg border bg-white px-3"
+                >
+                  <option value="quality">Por qualidade A ou B</option>
+                  <option value="score">Por faixa de score</option>
+                  <option value="all">Todos os contatos elegíveis</option>
+                </select>
+              </Field>
+              {audienceMode === 'quality' && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label
+                    htmlFor="audience-quality-a"
+                    className="flex items-center gap-3 rounded-lg border p-3 text-sm"
+                  >
+                    <input
+                      id="audience-quality-a"
+                      type="checkbox"
+                      checked={qualityA}
+                      onChange={(event) => {
+                        setQualityA(event.target.checked);
+                        setAudienceEstimate(null);
+                      }}
+                    />
+                    <span>
+                      <strong>Qualidade A</strong>
+                      <span className="block text-xs text-muted-foreground">
+                        Maior confiança e sinal comercial
+                      </span>
+                    </span>
+                  </label>
+                  <label
+                    htmlFor="audience-quality-b"
+                    className="flex items-center gap-3 rounded-lg border p-3 text-sm"
+                  >
+                    <input
+                      id="audience-quality-b"
+                      type="checkbox"
+                      checked={qualityB}
+                      onChange={(event) => {
+                        setQualityB(event.target.checked);
+                        setAudienceEstimate(null);
+                      }}
+                    />
+                    <span>
+                      <strong>Qualidade B</strong>
+                      <span className="block text-xs text-muted-foreground">
+                        Elegível, mas com menos sinais
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
+              {audienceMode === 'score' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <Field label="Score mínimo">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={minScore}
+                      onChange={(event) => {
+                        setMinScore(event.target.value);
+                        setAudienceEstimate(null);
+                      }}
+                    />
+                  </Field>
+                  <Field label="Score máximo">
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={maxScore}
+                      onChange={(event) => {
+                        setMaxScore(event.target.value);
+                        setAudienceEstimate(null);
+                      }}
+                    />
+                  </Field>
+                </div>
+              )}
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Limite diário">
+                  <Input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={dailyLimit}
+                    onChange={(event) => setDailyLimit(event.target.value)}
+                  />
+                </Field>
+                <Field label="Agendar início (opcional)">
+                  <Input
+                    type="datetime-local"
+                    value={scheduledAt}
+                    onChange={(event) => setScheduledAt(event.target.value)}
+                  />
+                </Field>
+              </div>
+              {audienceEstimate && (
+                <div className="grid grid-cols-3 gap-2 rounded-xl bg-indigo-50 p-4 text-center">
+                  <div>
+                    <strong className="block text-xl">
+                      {formatCount(audienceEstimate.total)}
+                    </strong>
+                    <span className="text-xs text-muted-foreground">total</span>
+                  </div>
+                  <div>
+                    <strong className="block text-xl text-emerald-700">
+                      {formatCount(audienceEstimate.quality_a)}
+                    </strong>
+                    <span className="text-xs text-muted-foreground">A</span>
+                  </div>
+                  <div>
+                    <strong className="block text-xl text-blue-700">
+                      {formatCount(audienceEstimate.quality_b)}
+                    </strong>
+                    <span className="text-xs text-muted-foreground">B</span>
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void estimateAudience()}
+                  disabled={audienceLoading}
+                >
+                  <Gauge />
+                  {audienceLoading ? 'Calculando…' : 'Calcular público'}
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={campaignStarting || !templates.length}
+                >
+                  <Play />
+                  {campaignStarting ? 'Preparando…' : 'Criar e iniciar'}
+                </Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+      </section>
 
       <section
         className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
@@ -2416,9 +2942,128 @@ function Queue({
 
       <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
         <CardHeader className="border-b">
+          <CardTitle className="font-bold">Campanhas em acompanhamento</CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Público, modelo, quantidade, progresso e controles de cada execução.
+          </p>
+        </CardHeader>
+        <CardContent className="grid gap-3 pt-5 lg:grid-cols-2">
+          {!queueCampaigns.length && (
+            <p className="py-6 text-center text-sm text-muted-foreground lg:col-span-2">
+              Nenhuma campanha configurada.
+            </p>
+          )}
+          {queueCampaigns.map((campaign) => {
+            const campaignProgress = campaign.total
+              ? Math.round(
+                  ((campaign.sent + campaign.failed) / campaign.total) * 100,
+                )
+              : 0;
+            return (
+              <div key={campaign.id} className="rounded-xl border p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{campaign.name}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {campaign.template_name || 'Modelo não informado'} ·{' '}
+                      {campaign.audience_mode === 'quality'
+                        ? `qualidade ${campaign.audience_qualities.join('/')}`
+                        : campaign.audience_mode === 'score'
+                          ? `score ${campaign.min_score ?? 0}–${campaign.max_score ?? 100}`
+                          : 'todos os elegíveis'}
+                    </p>
+                  </div>
+                  <StatusBadge status={campaign.status} />
+                </div>
+                <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div
+                    className="h-full rounded-full bg-indigo-500"
+                    style={{ width: `${campaignProgress}%` }}
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-4 gap-2 text-center text-xs">
+                  <div>
+                    <strong className="block text-base">{campaign.total}</strong>
+                    total
+                  </div>
+                  <div>
+                    <strong className="block text-base text-indigo-700">
+                      {campaign.queued}
+                    </strong>
+                    fila
+                  </div>
+                  <div>
+                    <strong className="block text-base text-emerald-700">
+                      {campaign.sent}
+                    </strong>
+                    enviados
+                  </div>
+                  <div>
+                    <strong className="block text-base text-rose-700">
+                      {campaign.failed}
+                    </strong>
+                    falhas
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                  {campaign.status === 'active' ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        await fetch(`/api/campaigns/${campaign.id}/pause`, {
+                          method: 'POST',
+                        });
+                        if (dispatchingCampaignId === campaign.id)
+                          setDispatchingCampaignId(null);
+                        await refresh();
+                      }}
+                    >
+                      <Pause /> Pausar
+                    </Button>
+                  ) : campaign.status === 'paused' ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        await fetch(`/api/campaigns/${campaign.id}/resume`, {
+                          method: 'POST',
+                        });
+                        await refresh();
+                      }}
+                    >
+                      <Play /> Retomar
+                    </Button>
+                  ) : null}
+                  {campaign.status === 'active' && campaign.queued > 0 && (
+                    <Button
+                      size="sm"
+                      disabled={
+                        settings?.dry_run || dispatchingCampaignId === campaign.id
+                      }
+                      onClick={() => {
+                        setPaused(false);
+                        setDispatchingCampaignId(campaign.id);
+                      }}
+                    >
+                      <Send />
+                      {dispatchingCampaignId === campaign.id
+                        ? 'Enviando…'
+                        : 'Enviar agora'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+
+      <Card className="border-0 shadow-sm ring-1 ring-slate-200/80">
+        <CardHeader className="border-b">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="font-bold">Progresso da execução</CardTitle>
+              <CardTitle className="font-bold">Mensagens por destinatário</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
                 {settings
                   ? `Próximo envio respeita intervalo de ${Math.round(settings.send_interval_seconds / 60)} minutos.`
@@ -2437,25 +3082,28 @@ function Queue({
         <CardContent className="divide-y p-0">
           {!snapshot.items.length && (
             <div className="px-5 py-10 text-center text-sm text-muted-foreground">
-              Nenhuma mensagem aguardando na fila do outreach.
+              Nenhuma mensagem preparada ou enviada pelo outreach.
             </div>
           )}
           {snapshot.items.map((item, index) => (
             <div
               key={item.id}
-              className="grid gap-3 px-5 py-4 md:grid-cols-[44px_1fr_1.35fr_150px_120px] md:items-center"
+              className="grid gap-3 px-5 py-4 md:grid-cols-[44px_1.1fr_1.15fr_120px_130px] md:items-center"
             >
               <span className="grid size-9 place-items-center rounded-full bg-slate-100 font-mono text-sm">
                 {String(index + 1).padStart(2, '0')}
               </span>
               <div>
                 <p className="font-semibold">{item.company}</p>
-                <p className="text-sm text-muted-foreground">{item.campaign}</p>
+                <p className="text-sm text-muted-foreground">
+                  {item.destination}
+                </p>
               </div>
               <div>
                 <p className="truncate text-sm font-medium">{item.subject}</p>
                 <p className="text-xs text-muted-foreground">
-                  {formatDateTime(item.scheduled_at)}
+                  {item.campaign} · qualidade {item.lead_quality} · score{' '}
+                  {item.score}
                 </p>
               </div>
               <Badge
@@ -2464,9 +3112,19 @@ function Queue({
               >
                 <Clock3 /> {queueStatus(item.status)}
               </Badge>
-              <Button variant="ghost" size="sm">
-                Detalhes
-              </Button>
+              <div className="text-right text-xs text-muted-foreground">
+                <span className="block">
+                  {item.sent_at
+                    ? `Enviado ${formatDateTime(item.sent_at)}`
+                    : `Previsto ${formatDateTime(item.scheduled_at)}`}
+                </span>
+                <span className="block">{item.provider || item.template_name || '—'}</span>
+                {item.last_error && (
+                  <span className="block truncate text-rose-600">
+                    {item.last_error}
+                  </span>
+                )}
+              </div>
             </div>
           ))}
         </CardContent>
@@ -2516,54 +3174,6 @@ function Queue({
         </CardContent>
       </Card>
 
-      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Agendar envio automático</DialogTitle>
-            <DialogDescription>
-              Escolha quando a campanha entra na fila. Os limites de segurança
-              continuam valendo.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <Field label="Campanha">
-              <select className="h-10 rounded-lg border bg-white px-3" disabled>
-                <option>Fila atual do outreach</option>
-              </select>
-            </Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Data">
-                <Input type="date" />
-              </Field>
-              <Field label="Horário">
-                <Input type="time" defaultValue="09:00" />
-              </Field>
-            </div>
-            <Field label="Recorrência">
-              <select className="h-10 rounded-lg border bg-white px-3">
-                <option>Uma vez</option>
-                <option>Diariamente</option>
-                <option>Dias úteis</option>
-                <option>Semanalmente</option>
-              </select>
-            </Field>
-            <Toggle
-              label="Iniciar automaticamente"
-              description="Sem exigir clique manual no horário agendado."
-              checked={true}
-              onCheckedChange={() => undefined}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setScheduleOpen(false)}>
-              Cancelar
-            </Button>
-            <Button disabled>
-              <CalendarClock /> Aguardando endpoint de agendamento
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -4874,10 +5484,16 @@ function contactStatus(status: string) {
 function queueStatus(status: string) {
   const labels: Record<string, string> = {
     pending: 'Aguardando',
+    pending_approval: 'Aguardando aprovação',
+    approved: 'Aprovado',
     queued: 'Na fila',
     scheduled: 'Agendado',
     sending: 'Enviando',
     sent: 'Enviado',
+    delivered: 'Entregue',
+    bounced: 'Devolvido',
+    replied: 'Respondeu',
+    unsubscribed: 'Descadastrado',
     failed: 'Falhou',
   };
   return labels[status] ?? status;
