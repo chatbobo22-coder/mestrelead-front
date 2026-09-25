@@ -1208,14 +1208,14 @@ function Contacts() {
         <Metric
           label="Qualidade A"
           value={formatCount(data.metrics.quality_a)}
-          detail="score digital ≥ 70 + sinal forte"
+          detail="enriquecido: score ≥ 70 + sinal forte"
           icon={ShieldCheck}
           positive
         />
         <Metric
           label="Qualidade B"
           value={formatCount(data.metrics.quality_b)}
-          detail="digital ≥ 60 ou perfil público"
+          detail="pré-qualificado ou sem sinal forte"
           icon={Activity}
         />
         <Metric
@@ -1227,23 +1227,24 @@ function Contacts() {
         <Metric
           label="Perfil público"
           value={formatCount(data.metrics.public_profile)}
-          detail={`score digital médio ${Number(data.metrics.average_score || 0).toLocaleString('pt-BR')}`}
+          detail={`score médio ${Number(data.metrics.average_score || 0).toLocaleString('pt-BR')}`}
           icon={Gauge}
         />
       </section>
       <Card className="border-indigo-100 bg-indigo-50/60 shadow-none">
         <CardContent className="grid gap-2 p-4 text-sm lg:grid-cols-3">
           <p>
-            <strong>Score digital 0–100:</strong> 70+ forte, 60–69 bom, 40–59
-            revisar, abaixo de 40 fraco.
+            <strong>Score 0–100:</strong> começa como pré-score cadastral e é
+            substituído pelo score digital após o enriquecimento. Abaixo de 70
+            é descartado.
           </p>
           <p>
-            <strong>Qualidade A:</strong> confiança mínima de 70 e sinal
-            comercial forte.
+            <strong>Qualidade A:</strong> e-mail válido, confiança e score
+            mínimos de 70, mais site, WhatsApp ou Google operacional confirmado.
           </p>
           <p>
-            <strong>Qualidade B:</strong> atende ao digital ou possui perfil
-            público completo e verificável.
+            <strong>Qualidade B:</strong> passou na triagem e no e-mail, mas
+            ainda aguarda aprofundamento ou não apresentou sinal forte para A.
           </p>
         </CardContent>
       </Card>
@@ -1501,7 +1502,7 @@ function Crm({ setNotice }: { setNotice: (notice: string) => void }) {
                   <TableHead className="pl-5">Empresa</TableHead>
                   <TableHead>Contato</TableHead>
                   <TableHead>Qualidade</TableHead>
-                  <TableHead>Score digital</TableHead>
+                  <TableHead>Score do lead</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1714,7 +1715,7 @@ function LeadDetailDialog({
             <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
               <DetailStat label="Qualidade" value={lead.lead_quality || '—'} />
               <DetailStat
-                label="Score digital"
+                label="Score do lead"
                 value={String(lead.score ?? 0)}
               />
               <DetailStat
