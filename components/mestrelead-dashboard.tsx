@@ -2686,7 +2686,11 @@ function Injector({
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
   const [monitorError, setMonitorError] = useState('');
   const [abortOpen, setAbortOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const [aborting, setAborting] = useState(false);
+  const [pausing, setPausing] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
 
   const liveRun = runs.find((run) => run.status !== 'completed');
@@ -2799,6 +2803,86 @@ function Injector({
     }
   }
 
+  async function pauseRun() {
+    if (!snapshot || snapshot.run.status === 'completed') return;
+    setPausing(true);
+    try {
+      const response = await fetch(
+        `/api/injector/runs/${snapshot.run.id}/pause`,
+        { method: 'POST' },
+      );
+      const result = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(result.detail || result.error || 'Falha ao pausar.');
+      setNotice(
+        'Pausa solicitada. O cursor foi preservado; Iniciar Injector retoma do ponto salvo.',
+      );
+      await refresh();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Falha ao pausar.');
+    } finally {
+      setPausing(false);
+    }
+  }
+
+  async function publishQualified() {
+    setPublishing(true);
+    try {
+      const response = await fetch('/api/injector/publish-qualified', {
+        method: 'POST',
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(
+          result.detail || result.error || 'Falha ao publicar qualificados.',
+        );
+      setNotice(
+        'Publicação iniciada em paralelo. A carga principal continuará normalmente.',
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : 'Falha ao publicar qualificados.',
+      );
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function cleanupStorage() {
+    setCleaning(true);
+    try {
+      const response = await fetch('/api/injector/cleanup-storage', {
+        method: 'POST',
+      });
+      const result = (await response.json().catch(() => ({}))) as {
+        detail?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(
+          result.detail || result.error || 'Falha ao iniciar a limpeza.',
+        );
+      setNotice(
+        'Limpeza iniciada. Ela remove apenas intermediários e preserva leads, contatos e cursores.',
+      );
+      setCleanupOpen(false);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : 'Falha ao iniciar a limpeza.',
+      );
+    } finally {
+      setCleaning(false);
+    }
+  }
+
   if (!draft) {
     return (
       <div className="space-y-5">
@@ -2840,16 +2924,52 @@ function Injector({
                     · atualização automática a cada 3 segundos
                   </p>
                 </div>
-                {snapshot.run.status !== 'completed' && (
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
-                    variant="destructive"
-                    onClick={() => setAbortOpen(true)}
+                    variant="outline"
+                    onClick={() => void publishQualified()}
+                    disabled={publishing}
                   >
-                    <Square className="size-4 fill-current" />
-                    Abortar carga
+                    {publishing ? <Activity className="animate-spin" /> : <Save />}
+                    {publishing ? 'Publicando…' : 'Publicar qualificados'}
                   </Button>
-                )}
+                  {snapshot.run.status !== 'completed' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void pauseRun()}
+                      disabled={pausing}
+                    >
+                      {pausing ? <Activity className="animate-spin" /> : <Pause />}
+                      {pausing ? 'Pausando…' : 'Pausar carga'}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setCleanupOpen(true)}
+                    disabled={cleaning || snapshot.run.status !== 'completed'}
+                    title={
+                      snapshot.run.status !== 'completed'
+                        ? 'Pause a carga antes de compactar o banco'
+                        : undefined
+                    }
+                  >
+                    {cleaning ? <Activity className="animate-spin" /> : <Database />}
+                    {cleaning ? 'Limpando…' : 'Liberar armazenamento'}
+                  </Button>
+                  {snapshot.run.status !== 'completed' && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => setAbortOpen(true)}
+                    >
+                      <Square className="size-4 fill-current" />
+                      Abortar carga
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent className="space-y-6 p-5">
@@ -3449,6 +3569,38 @@ function Injector({
             >
               {aborting ? <Activity className="animate-spin" /> : <Square />}
               {aborting ? 'Abortando…' : 'Sim, abortar carga'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={cleanupOpen} onOpenChange={setCleanupOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Liberar armazenamento do banco?</DialogTitle>
+            <DialogDescription>
+              Serão removidos dados intermediários que já receberam decisão e
+              históricos operacionais antigos. Leads A/B, contatos mínimos
+              descartados e o cursor de retomada serão preservados. Durante a
+              compactação, essas tabelas ficam temporariamente bloqueadas.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCleanupOpen(false)}
+              disabled={cleaning}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void cleanupStorage()}
+              disabled={cleaning}
+            >
+              {cleaning ? <Activity className="animate-spin" /> : <Database />}
+              {cleaning ? 'Limpando…' : 'Sim, liberar espaço'}
             </Button>
           </DialogFooter>
         </DialogContent>
